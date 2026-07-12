@@ -1,7 +1,7 @@
 // components/dashboard/employee/punch-button.js
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 
 export default function PunchButton() {
   const [time, setTime] = useState("");
@@ -11,24 +11,55 @@ export default function PunchButton() {
   const [location, setLocation] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [logs, setLogs] = useState([
-    { type: "OUT", time: "6:02 PM", date: "02 July", status: "Verified" },
-    { type: "IN", time: "9:05 AM", date: "02 July", status: "Verified" },
-    { type: "OUT", time: "6:05 PM", date: "01 July", status: "Verified" },
-    { type: "IN", time: "8:58 AM", date: "01 July", status: "Verified" },
-  ]);
+  const [logs, setLogs] = useState([]);
 
   // Live Clock
   useEffect(() => {
     const updateTime = () => {
       const now = new Date();
-      setTime(now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true }));
-      setDate(now.toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "short" }));
+      setTime(
+        now.toLocaleTimeString("en-IN", {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: true,
+        })
+      );
+      setDate(
+        now.toLocaleDateString("en-IN", {
+          weekday: "long",
+          day: "numeric",
+          month: "short",
+        })
+      );
     };
     updateTime();
     const interval = setInterval(updateTime, 1000);
     return () => clearInterval(interval);
   }, []);
+
+  // Fetch today's initial status and logs from database on load
+  const fetchStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/v1/attendance/status");
+      if (res.ok) {
+        const data = await res.json();
+        if (data.status) {
+          setPunchState(data.status);
+          setPunchInTime(data.punchInTime || null);
+        }
+        if (data.logs) {
+          setLogs(data.logs);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to load initial punch status:", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchStatus();
+  }, [fetchStatus]);
 
   const handlePunch = () => {
     setLoading(true);
@@ -41,32 +72,60 @@ export default function PunchButton() {
     }
 
     navigator.geolocation.getCurrentPosition(
-      (position) => {
+      async (position) => {
         const { latitude, longitude, accuracy } = position.coords;
-        // Mock verification: check if within 50m of Hajipur store (e.g. 25.6839, 85.2238)
-        setLocation({ lat: latitude.toFixed(6), lng: longitude.toFixed(6), accuracy: accuracy.toFixed(1) });
-        
-        const now = new Date();
-        const formattedTime = now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
-        
-        if (punchState === "OUT") {
-          // Punch In
-          setPunchState("IN");
-          setPunchInTime(formattedTime);
+        setLocation({
+          lat: latitude.toFixed(6),
+          lng: longitude.toFixed(6),
+          accuracy: accuracy.toFixed(1),
+        });
+
+        try {
+          const res = await fetch("/api/v1/attendance/punch", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ latitude, longitude }),
+          });
+
+          const data = await res.json();
+
+          if (!res.ok) {
+            throw new Error(data.message || data.error || "Punch request failed");
+          }
+
+          // Successful Punch
+          const now = new Date();
+          const formattedTime = now.toLocaleTimeString("en-IN", {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: true,
+          });
+
+          const serverType = data.punch.type; // "In" or "Out"
+          setPunchState(serverType === "In" ? "IN" : "OUT");
+
+          if (serverType === "In") {
+            setPunchInTime(formattedTime);
+          } else {
+            setPunchInTime(null);
+          }
+
+          // Prepend new log
           setLogs((prev) => [
-            { type: "IN", time: formattedTime, date: "Today", status: "Verified" },
+            {
+              type: serverType === "In" ? "IN" : "OUT",
+              time: formattedTime,
+              date: "Today",
+              status: `Verified (${data.punch.distanceMeters}m)`,
+            },
             ...prev,
           ]);
-        } else {
-          // Punch Out
-          setPunchState("OUT");
-          setPunchInTime(null);
-          setLogs((prev) => [
-            { type: "OUT", time: formattedTime, date: "Today", status: "Verified" },
-            ...prev,
-          ]);
+
+        } catch (err) {
+          setError(err.message);
+        } finally {
+          setLoading(false);
         }
-        setLoading(false);
       },
       (err) => {
         setError("Could not verify your location. Please check your GPS permissions.");
@@ -90,7 +149,7 @@ export default function PunchButton() {
         <button
           onClick={handlePunch}
           disabled={loading}
-          className={`relative flex h-48 w-48 flex-col items-center justify-center rounded-full border-8 transition-all active:scale-95 shadow-md ${
+          className={`relative flex h-48 w-48 flex-col items-center justify-center rounded-full border-8 transition-all active:scale-95 shadow-md disabled:opacity-80 cursor-pointer ${
             punchState === "IN"
               ? "bg-amber-50 border-amber-400 hover:bg-amber-100"
               : "bg-emerald-50 border-emerald-400 hover:bg-emerald-100"
@@ -109,7 +168,12 @@ export default function PunchButton() {
                 viewBox="0 0 24 24"
                 stroke="currentColor"
               >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"
+                />
               </svg>
               <span className={`text-xl font-black ${punchState === "IN" ? "text-amber-800" : "text-emerald-800"}`}>
                 {punchState === "IN" ? "PUNCH OUT" : "PUNCH IN"}
@@ -122,7 +186,7 @@ export default function PunchButton() {
         </button>
 
         {/* Location / Status Warnings */}
-        {location && (
+        {location && !error && (
           <div className="flex items-center gap-2 text-xs text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-100 font-medium">
             <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
             GPS Secured: {location.lat}, {location.lng} (±{location.accuracy}m)
@@ -130,7 +194,7 @@ export default function PunchButton() {
         )}
 
         {error && (
-          <div className="text-xs text-rose-600 bg-rose-50 px-4 py-2.5 rounded-lg border border-rose-100 font-medium text-center max-w-xs">
+          <div className="text-xs text-rose-600 bg-rose-50 px-4 py-2.5 rounded-lg border border-rose-100 font-semibold text-center max-w-xs">
             ⚠️ {error}
           </div>
         )}
@@ -143,31 +207,35 @@ export default function PunchButton() {
       </div>
 
       {/* Daily Logs Table */}
-      <div className="bg-white rounded-2xl p-6 border border-zinc-200 shadow-sm space-y-4">
-        <h3 className="text-sm font-bold text-zinc-800 uppercase tracking-wider border-b pb-2">Recent Attendance Log</h3>
-        <div className="divide-y divide-zinc-100">
-          {logs.map((log, index) => (
-            <div key={index} className="flex items-center justify-between py-3">
-              <div className="flex items-center gap-3">
-                <span
-                  className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold ${
-                    log.type === "IN" ? "bg-emerald-50 text-emerald-700" : "bg-zinc-100 text-zinc-600"
-                  }`}
-                >
-                  {log.type}
-                </span>
-                <div className="flex flex-col">
-                  <span className="text-sm font-bold text-zinc-900">{log.time}</span>
-                  <span className="text-xs text-zinc-400">{log.date}</span>
+      {logs.length > 0 && (
+        <div className="bg-white rounded-2xl p-6 border border-zinc-200 shadow-sm space-y-4">
+          <h3 className="text-sm font-bold text-zinc-800 uppercase tracking-wider border-b pb-2">Recent Attendance Log</h3>
+          <div className="divide-y divide-zinc-100">
+            {logs.map((log, index) => (
+              <div key={index} className="flex items-center justify-between py-3">
+                <div className="flex items-center gap-3">
+                  <span
+                    className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold ${
+                      log.type === "IN" || log.type === "In"
+                        ? "bg-emerald-50 text-emerald-700"
+                        : "bg-zinc-100 text-zinc-600"
+                    }`}
+                  >
+                    {log.type}
+                  </span>
+                  <div className="flex flex-col">
+                    <span className="text-sm font-bold text-zinc-900">{log.time}</span>
+                    <span className="text-xs text-zinc-400">{log.date}</span>
+                  </div>
                 </div>
+                <span className="text-xs font-medium text-emerald-600 bg-emerald-50 border border-emerald-100 px-2.5 py-1 rounded-full">
+                  {log.status}
+                </span>
               </div>
-              <span className="text-xs font-medium text-emerald-600 bg-emerald-50 border border-emerald-100 px-2.5 py-1 rounded-full">
-                {log.status}
-              </span>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

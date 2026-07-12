@@ -1,4 +1,4 @@
-// middleware.js
+// proxy.js
 import { NextResponse } from "next/server";
 import { verifyJWT } from "./lib/auth";
 
@@ -12,7 +12,7 @@ const ROUTE_ACCESS = {
 
 const AUTH_PAGES = ["/login", "/signup"];
 
-export async function middleware(request) {
+export async function proxy(request) {
   const { pathname } = request.nextUrl;
 
   // Extract token from request cookies

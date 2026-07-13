@@ -1,14 +1,22 @@
 // components/dashboard/admin/onboarding/salary-step.js
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 export default function SalaryStep({ data, update }) {
-  const [components, setComponents] = useState([
-    { name: "Basic Pay", amount: 9000, type: "EARNING" },
-    { name: "House Rent Allowance (HRA)", amount: 4500, type: "EARNING" },
-    { name: "Conveyance Allowance", amount: 4500, type: "EARNING" },
-  ]);
+  const [components, setComponents] = useState(
+    data.components && data.components.length > 0
+      ? data.components
+      : [
+          { name: "Basic Pay", amount: 9000, type: "EARNING" },
+          { name: "House Rent Allowance (HRA)", amount: 4500, type: "EARNING" },
+          { name: "Conveyance Allowance", amount: 4500, type: "EARNING" },
+        ]
+  );
+
+  useEffect(() => {
+    update({ components });
+  }, [components]);
 
   const handleAddComponent = () => {
     setComponents([...components, { name: "", amount: "", type: "EARNING" }]);

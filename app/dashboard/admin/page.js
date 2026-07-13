@@ -1,7 +1,7 @@
 // app/dashboard/admin/page.js
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 
 export default function AdminDashboardPage() {
@@ -17,11 +17,29 @@ export default function AdminDashboardPage() {
   ]);
 
   // Employee Quick List
-  const [employees, setEmployees] = useState([
-    { id: "emp-1", name: "Amit Kumar", role: "Head Cook", attendance: "28 / 30", advances: 2000, basePay: 18000, status: "Ready" },
-    { id: "emp-2", name: "Priya Singh", role: "Cashier", attendance: "30 / 30", advances: 0, basePay: 15000, status: "Ready" },
-    { id: "emp-3", name: "Rahul Verma", role: "Cleaner", attendance: "14 / 30", advances: 0, basePay: 15000, status: "Needs Proration" },
-  ]);
+  const [employees, setEmployees] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchEmployees() {
+      try {
+        const res = await fetch("/api/v1/employees");
+        if (res.ok) {
+          const data = await res.json();
+          setEmployees(data.employees || []);
+        }
+      } catch (err) {
+        console.error("Failed to load employees:", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchEmployees();
+  }, []);
+
+  const totalEstimatedPayroll = employees.reduce((sum, emp) => sum + (emp.basePay || 0), 0);
+  const totalAdvances = employees.reduce((sum, emp) => sum + (emp.advances || 0), 0);
+  const activeStaffCount = employees.filter(emp => emp.status === "Active").length;
 
   // Handle leave approval
   const handleLeaveApproval = (id, approved) => {
@@ -54,23 +72,23 @@ export default function AdminDashboardPage() {
         <div className="bg-white border rounded-xl p-5 shadow-sm space-y-2">
           <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest block">Total Estimated Payroll</span>
           <div className="flex items-baseline gap-2">
-            <span className="text-3xl font-black text-zinc-950">₹1,42,000</span>
+            <span className="text-3xl font-black text-zinc-950">₹{totalEstimatedPayroll.toLocaleString("en-IN")}</span>
           </div>
           <span className="text-[10px] text-zinc-400 block">Based on active salary parameters</span>
         </div>
         <div className="bg-white border rounded-xl p-5 shadow-sm space-y-2">
           <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest block">Advances to Recover</span>
           <div className="flex items-baseline gap-2">
-            <span className="text-3xl font-black text-zinc-950">₹8,500</span>
+            <span className="text-3xl font-black text-zinc-950">₹{totalAdvances.toLocaleString("en-IN")}</span>
           </div>
           <span className="text-[10px] text-emerald-600 font-medium block">✓ Deductions queued for payslips</span>
         </div>
         <div className="bg-white border rounded-xl p-5 shadow-sm space-y-2">
           <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest block">Staff Timeline</span>
           <div className="flex items-baseline gap-2">
-            <span className="text-3xl font-black text-zinc-950">8 Active</span>
+            <span className="text-3xl font-black text-zinc-950">{activeStaffCount} Active</span>
           </div>
-          <span className="text-[10px] text-zinc-400 block">1 Employee onboarding finalized mid-month</span>
+          <span className="text-[10px] text-zinc-400 block">{employees.length - activeStaffCount} exited/inactive records</span>
         </div>
       </div>
 
@@ -152,40 +170,57 @@ export default function AdminDashboardPage() {
                 <th className="py-3 px-5 text-center">Status</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-zinc-100 font-medium">
-              {filteredEmployees.map((emp) => {
-                // Mock calculation of net pay
-                let calculatedPay = emp.baseSalary || emp.basePay;
-                if (emp.name === "Rahul Verma") {
-                  calculatedPay = 7000; // Mock proration
-                }
-                const netPay = calculatedPay - emp.advances;
-                
-                return (
-                  <tr key={emp.id} className="hover:bg-zinc-50/50">
-                    <td className="py-4 px-5 text-zinc-950 font-bold">{emp.name}</td>
-                    <td className="py-4 px-5 text-zinc-500">{emp.role}</td>
-                    <td className="py-4 px-5 text-center text-zinc-900">{emp.attendance}</td>
-                    <td className="py-4 px-5 text-right text-rose-600">
-                      {emp.advances > 0 ? `-₹${emp.advances.toLocaleString("en-IN")}` : "₹0"}
-                    </td>
-                    <td className="py-4 px-5 text-right text-zinc-950 font-bold">
-                      ₹{netPay.toLocaleString("en-IN")}
-                    </td>
-                    <td className="py-4 px-5 text-center">
-                      <span
-                        className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
-                          emp.status === "Ready" || payrollStatus === "LOCKED"
-                            ? "bg-emerald-50 text-emerald-700 border border-emerald-100"
-                            : "bg-amber-50 text-amber-700 border border-amber-100"
-                        }`}
-                      >
-                        {payrollStatus === "LOCKED" ? "Processed" : emp.status}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
+            <tbody className="divide-y divide-zinc-100 font-medium text-zinc-900">
+              {loading ? (
+                <tr>
+                  <td colSpan="6" className="py-8 text-center text-sm text-zinc-500 font-semibold">
+                    <div className="flex items-center justify-center gap-2">
+                      <svg className="animate-spin h-5 w-5 text-zinc-900" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      Loading employees...
+                    </div>
+                  </td>
+                </tr>
+              ) : filteredEmployees.length === 0 ? (
+                <tr>
+                  <td colSpan="6" className="py-8 text-center text-sm text-zinc-500 font-semibold">
+                    No employees found.
+                  </td>
+                </tr>
+              ) : (
+                filteredEmployees.map((emp) => {
+                  const base = emp.basePay || 0;
+                  const adv = emp.advances || 0;
+                  const netPay = base - adv;
+
+                  return (
+                    <tr key={emp.id} className="hover:bg-zinc-50/50">
+                      <td className="py-4 px-5 text-zinc-950 font-bold">{emp.name}</td>
+                      <td className="py-4 px-5 text-zinc-500">{emp.role}</td>
+                      <td className="py-4 px-5 text-center text-zinc-900">{emp.attendance}</td>
+                      <td className="py-4 px-5 text-right text-rose-600">
+                        {adv > 0 ? `-₹${adv.toLocaleString("en-IN")}` : "₹0"}
+                      </td>
+                      <td className="py-4 px-5 text-right text-zinc-950 font-bold">
+                        ₹{netPay.toLocaleString("en-IN")}
+                      </td>
+                      <td className="py-4 px-5 text-center">
+                        <span
+                          className={`text-[11px] font-bold px-2.5 py-1 rounded-full border ${
+                            emp.status === "Active" || payrollStatus === "LOCKED"
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-100"
+                              : "bg-amber-50 text-amber-700 border-amber-100"
+                          }`}
+                        >
+                          {payrollStatus === "LOCKED" ? "Processed" : emp.status}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
@@ -269,74 +304,46 @@ export default function AdminDashboardPage() {
 
               {/* Individual breakdowns */}
               <div className="space-y-4 divide-y">
-                {/* Amit Kumar */}
-                <div className="space-y-2 py-2">
-                  <div className="flex justify-between font-bold">
-                    <span className="text-zinc-900 text-sm">Amit Kumar (Head Cook)</span>
-                    <span className="text-zinc-900 text-sm">₹16,000</span>
-                  </div>
-                  <div className="text-xs text-zinc-500 space-y-1">
-                    <div className="flex justify-between">
-                      <span>Base Salary</span>
-                      <span>₹18,000</span>
+                {employees.map((emp) => {
+                  const base = emp.basePay || 0;
+                  const adv = emp.advances || 0;
+                  const net = base - adv;
+                  return (
+                    <div key={emp.id} className="space-y-2 py-2 first:pt-0">
+                      <div className="flex justify-between font-bold">
+                        <span className="text-zinc-900 text-sm">{emp.name} ({emp.role})</span>
+                        <span className="text-zinc-900 text-sm">₹{net.toLocaleString("en-IN")}</span>
+                      </div>
+                      <div className="text-xs text-zinc-500 space-y-1">
+                        <div className="flex justify-between">
+                          <span>Base Salary</span>
+                          <span>₹{base.toLocaleString("en-IN")}</span>
+                        </div>
+                        {adv > 0 && (
+                          <div className="flex justify-between text-rose-600">
+                            <span>Advance Deducted</span>
+                            <span>-₹{adv.toLocaleString("en-IN")}</span>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex justify-between text-rose-600">
-                      <span>Advance Deducted</span>
-                      <span>-₹2,000</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Priya Singh */}
-                <div className="space-y-2 pt-4">
-                  <div className="flex justify-between font-bold">
-                    <span className="text-zinc-900 text-sm">Priya Singh (Cashier)</span>
-                    <span className="text-zinc-900 text-sm">₹15,000</span>
-                  </div>
-                  <div className="text-xs text-zinc-500 space-y-1">
-                    <div className="flex justify-between">
-                      <span>Base Salary</span>
-                      <span>₹15,000</span>
-                    </div>
-                    <div className="flex justify-between text-emerald-600">
-                      <span>Attendance (30/30)</span>
-                      <span>No deductions</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Rahul Verma */}
-                <div className="space-y-2 pt-4">
-                  <div className="flex justify-between font-bold">
-                    <span className="text-zinc-900 text-sm">Rahul Verma (Cleaner)</span>
-                    <span className="text-zinc-900 text-sm">₹7,000</span>
-                  </div>
-                  <div className="text-xs text-zinc-500 space-y-1">
-                    <div className="flex justify-between">
-                      <span>Base Salary</span>
-                      <span>₹15,000</span>
-                    </div>
-                    <div className="flex justify-between text-rose-600">
-                      <span>Prorated (Joined Mid-Month)</span>
-                      <span>-₹8,000</span>
-                    </div>
-                  </div>
-                </div>
+                  );
+                })}
               </div>
 
               {/* Aggregation */}
               <div className="bg-zinc-50 border rounded-xl p-4 space-y-2 mt-6">
                 <div className="flex justify-between text-xs text-zinc-500 font-semibold">
-                  <span>Gross Payout (3 Staff)</span>
-                  <span>₹40,000</span>
+                  <span>Gross Payout ({employees.length} Staff)</span>
+                  <span>₹{totalEstimatedPayroll.toLocaleString("en-IN")}</span>
                 </div>
                 <div className="flex justify-between text-xs text-rose-600 font-semibold">
                   <span>Advance Deductions</span>
-                  <span>-₹2,000</span>
+                  <span>-₹{totalAdvances.toLocaleString("en-IN")}</span>
                 </div>
                 <div className="flex justify-between text-sm font-bold border-t border-dashed pt-2 text-zinc-950">
                   <span>Total Cash Required</span>
-                  <span>₹38,000</span>
+                  <span>₹{(totalEstimatedPayroll - totalAdvances).toLocaleString("en-IN")}</span>
                 </div>
               </div>
             </div>

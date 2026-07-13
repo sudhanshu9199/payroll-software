@@ -94,7 +94,8 @@ export default function ShiftStep({ data, update }) {
             <label className="block text-xs font-semibold text-zinc-500 uppercase">Geofencing Radius</label>
             <select
               className="mt-1 block w-full rounded-md border border-zinc-300 px-3 py-2.5 bg-white text-zinc-900 focus:border-zinc-950 focus:outline-none text-xs"
-              defaultValue="50"
+              value={data.radiusMeters || 50}
+              onChange={(e) => update({ radiusMeters: parseInt(e.target.value) })}
             >
               <option value="20">Strict (20 meters)</option>
               <option value="50">Standard (50 meters)</option>

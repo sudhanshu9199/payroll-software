@@ -1,17 +1,30 @@
 // app/dashboard/admin/employees/page.js
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 
 export default function AdminEmployeesPage() {
   const [searchTerm, setSearchTerm] = useState("");
-  
-  const [employees, setEmployees] = useState([
-    { id: "emp-1", name: "Amit Kumar", role: "Head Cook", joiningDate: "12 May 2025", phone: "+91 98765 43210", status: "Active" },
-    { id: "emp-2", name: "Priya Singh", role: "Cashier", joiningDate: "01 Jan 2026", phone: "+91 87654 32109", status: "Active" },
-    { id: "emp-3", name: "Rahul Verma", role: "Cleaner", joiningDate: "15 Jun 2026", phone: "+91 76543 21098", status: "Active" },
-  ]);
+  const [employees, setEmployees] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchEmployees() {
+      try {
+        const res = await fetch("/api/v1/employees");
+        if (res.ok) {
+          const data = await res.json();
+          setEmployees(data.employees || []);
+        }
+      } catch (err) {
+        console.error("Failed to load employees:", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchEmployees();
+  }, []);
 
   const filteredEmployees = employees.filter(emp =>
     emp.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -61,33 +74,57 @@ export default function AdminEmployeesPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100 font-medium text-zinc-900">
-              {filteredEmployees.map((emp) => (
-                <tr key={emp.id} className="hover:bg-zinc-50/50">
-                  <td className="py-4 px-5 text-zinc-950 font-bold">{emp.name}</td>
-                  <td className="py-4 px-5 text-zinc-500">{emp.role}</td>
-                  <td className="py-4 px-5">{emp.phone}</td>
-                  <td className="py-4 px-5 text-zinc-500">{emp.joiningDate}</td>
-                  <td className="py-4 px-5 text-center">
-                    <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">
-                      {emp.status}
-                    </span>
-                  </td>
-                  <td className="py-4 px-5 text-right space-x-2">
-                    <button
-                      onClick={() => alert(`Editing profile of ${emp.name}`)}
-                      className="text-xs font-bold text-zinc-600 hover:text-zinc-950 px-2.5 py-1.5 border rounded-lg hover:bg-zinc-50"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => alert(`Marking exit and generating final payout (FnF) for ${emp.name}`)}
-                      className="text-xs font-bold text-rose-600 hover:text-rose-700 px-2.5 py-1.5 border border-rose-200 hover:bg-rose-50 rounded-lg"
-                    >
-                      Exit
-                    </button>
+              {loading ? (
+                <tr>
+                  <td colSpan="6" className="py-8 text-center text-sm text-zinc-500 font-semibold">
+                    <div className="flex items-center justify-center gap-2">
+                      <svg className="animate-spin h-5 w-5 text-zinc-900" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      Loading employees...
+                    </div>
                   </td>
                 </tr>
-              ))}
+              ) : filteredEmployees.length === 0 ? (
+                <tr>
+                  <td colSpan="6" className="py-8 text-center text-sm text-zinc-500 font-semibold">
+                    No employees found. Click "Add New Employee" to onboard your staff.
+                  </td>
+                </tr>
+              ) : (
+                filteredEmployees.map((emp) => (
+                  <tr key={emp.id} className="hover:bg-zinc-50/50">
+                    <td className="py-4 px-5 text-zinc-950 font-bold">{emp.name}</td>
+                    <td className="py-4 px-5 text-zinc-500">{emp.role}</td>
+                    <td className="py-4 px-5">{emp.phone}</td>
+                    <td className="py-4 px-5 text-zinc-500">{emp.joiningDate}</td>
+                    <td className="py-4 px-5 text-center">
+                      <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full border ${
+                        emp.status === "Active"
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-100"
+                          : "bg-zinc-100 text-zinc-600 border-zinc-200"
+                      }`}>
+                        {emp.status}
+                      </span>
+                    </td>
+                    <td className="py-4 px-5 text-right space-x-2">
+                      <button
+                        onClick={() => alert(`Editing profile of ${emp.name}`)}
+                        className="text-xs font-bold text-zinc-600 hover:text-zinc-950 px-2.5 py-1.5 border rounded-lg hover:bg-zinc-50"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => alert(`Marking exit and generating final payout (FnF) for ${emp.name}`)}
+                        className="text-xs font-bold text-rose-600 hover:text-rose-700 px-2.5 py-1.5 border border-rose-200 hover:bg-rose-50 rounded-lg"
+                      >
+                        Exit
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

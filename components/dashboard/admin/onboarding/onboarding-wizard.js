@@ -9,6 +9,10 @@ import ShiftStep from "./shift-step";
 
 export default function OnboardingWizard() {
   const [currentStep, setCurrentStep] = useState(1);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const [successCredentials, setSuccessCredentials] = useState(null);
+
   const [formData, setFormData] = useState({
     // Step 1: KYC & Personal
     fullName: "",
@@ -25,6 +29,7 @@ export default function OnboardingWizard() {
     ptEnabled: false,
     otEnabled: false,
     otType: "Standard Hourly",
+    components: [],
     // Step 3: Payouts & Banking
     paymentMethod: "Bank Transfer",
     accountHolder: "",
@@ -36,6 +41,7 @@ export default function OnboardingWizard() {
     shiftName: "General Shift (9 AM - 6 PM)",
     gracePeriod: 15,
     locationName: "Hajipur Main Branch",
+    radiusMeters: 50,
   });
 
   const updateForm = (fields) => {
@@ -45,11 +51,33 @@ export default function OnboardingWizard() {
   const nextStep = () => setCurrentStep((prev) => Math.min(prev + 1, 4));
   const prevStep = () => setCurrentStep((prev) => Math.max(prev - 1, 1));
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    console.log("Onboarding Form Submitted Payload:", formData);
-    alert(`Employee "${formData.fullName}" onboarded successfully! Account created for phone "${formData.phone}".`);
-    window.location.href = "/dashboard/admin/employees";
+    setSubmitting(true);
+    setError("");
+
+    try {
+      const res = await fetch("/api/v1/employees", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(formData),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to onboard employee");
+      }
+
+      setSuccessCredentials({
+        name: formData.fullName,
+        phone: formData.phone,
+        password: data.tempPassword,
+      });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -83,6 +111,11 @@ export default function OnboardingWizard() {
 
       {/* Steps Rendering */}
       <div className="min-h-[300px]">
+        {error && (
+          <div className="mb-5 p-3.5 text-xs font-semibold text-rose-600 bg-rose-50 border border-rose-100 rounded-lg flex items-center gap-2">
+            <span>⚠️ {error}</span>
+          </div>
+        )}
         {currentStep === 1 && <KYCStep data={formData} update={updateForm} />}
         {currentStep === 2 && <SalaryStep data={formData} update={updateForm} />}
         {currentStep === 3 && <PayoutStep data={formData} update={updateForm} />}
@@ -94,7 +127,7 @@ export default function OnboardingWizard() {
         <button
           type="button"
           onClick={prevStep}
-          disabled={currentStep === 1}
+          disabled={currentStep === 1 || submitting}
           className="px-4 py-2 border rounded-lg text-sm font-semibold hover:bg-zinc-50 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Previous
@@ -112,12 +145,62 @@ export default function OnboardingWizard() {
           <button
             type="button"
             onClick={handleSubmit}
-            className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-semibold hover:bg-emerald-700"
+            disabled={submitting}
+            className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50"
           >
-            Finish Onboarding
+            {submitting ? "Processing..." : "Finish Onboarding"}
           </button>
         )}
       </div>
+
+      {/* Success Modal */}
+      {successCredentials && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 sm:p-8 shadow-2xl border border-zinc-100 text-center space-y-6">
+            <div className="flex justify-center">
+              <span className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
+                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                </svg>
+              </span>
+            </div>
+            
+            <div className="space-y-2">
+              <h3 className="text-xl font-black text-zinc-950 tracking-tight">Onboarding Successful!</h3>
+              <p className="text-sm text-zinc-500">
+                Employee <strong>{successCredentials.name}</strong> has been successfully registered. The login credentials are ready below:
+              </p>
+            </div>
+
+            <div className="bg-zinc-50 rounded-xl p-4 border border-zinc-100 text-left space-y-3 font-mono text-sm">
+              <div className="flex justify-between border-b pb-2">
+                <span className="text-xs text-zinc-400 font-sans font-semibold uppercase">Login Identifier</span>
+                <span className="text-zinc-950 font-bold">{successCredentials.phone}</span>
+              </div>
+              <div className="flex justify-between pt-1">
+                <span className="text-xs text-zinc-400 font-sans font-semibold uppercase">Temporary Password</span>
+                <span className="text-zinc-950 font-bold bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded border border-emerald-100">
+                  {successCredentials.password}
+                </span>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-zinc-400">
+              *The employee can sign in using their phone number and this password. They will be directed to their punch-in dashboard immediately.
+            </p>
+
+            <button
+              type="button"
+              onClick={() => {
+                window.location.href = "/dashboard/admin/employees";
+              }}
+              className="w-full py-3 bg-zinc-900 hover:bg-zinc-800 text-white text-sm font-semibold rounded-xl shadow-sm transition-colors"
+            >
+              Continue to Employee List
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

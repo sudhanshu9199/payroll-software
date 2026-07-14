@@ -10,15 +10,31 @@ export default function AdminDashboardPage() {
   const [dryRunOpen, setDryRunOpen] = useState(false);
   const [payrollStatus, setPayrollStatus] = useState("DRAFT"); // "DRAFT" or "LOCKED"
   
-  // Pending leaves state
-  const [pendingLeaves, setPendingLeaves] = useState([
-    { id: 1, name: "Rahul Verma", role: "Cleaner", type: "Unpaid Leave", dates: "14 Jun - 15 Jun", days: 2 },
-    { id: 2, name: "Amit Kumar", role: "Head Cook", type: "Sick Leave", dates: "18 Jun - 18 Jun", days: 1 },
-  ]);
+  // Real leaves state
+  const [leaves, setLeaves] = useState([]);
+  const [selectedLeave, setSelectedLeave] = useState(null);
 
   // Employee Quick List
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  // Derived pending leaves
+  const pendingLeaves = leaves.filter((leave) => leave.status === "Pending");
+
+  // Fetch leaves from database
+  const fetchLeaves = async () => {
+    try {
+      const res = await fetch("/api/v1/leaves");
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setLeaves(data.leaves || []);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to load leaves:", err);
+    }
+  };
 
   useEffect(() => {
     async function fetchEmployees() {
@@ -35,6 +51,7 @@ export default function AdminDashboardPage() {
       }
     }
     fetchEmployees();
+    fetchLeaves();
   }, []);
 
   const totalEstimatedPayroll = employees.reduce((sum, emp) => sum + (emp.basePay || 0), 0);
@@ -42,9 +59,32 @@ export default function AdminDashboardPage() {
   const activeStaffCount = employees.filter(emp => emp.status === "Active").length;
 
   // Handle leave approval
-  const handleLeaveApproval = (id, approved) => {
-    // In a real application, this triggers PATCH /api/v1/leaves/:id/status
-    setPendingLeaves(prev => prev.filter(leave => leave.id !== id));
+  const handleLeaveApproval = async (id, approved) => {
+    try {
+      const res = await fetch(`/api/v1/leaves/${id}/status`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ status: approved ? "Approved" : "Rejected" }),
+      });
+
+      if (res.ok) {
+        // Refresh leaves and employees lists on success
+        await fetchLeaves();
+        const empRes = await fetch("/api/v1/employees");
+        if (empRes.ok) {
+          const empData = await empRes.json();
+          setEmployees(empData.employees || []);
+        }
+      } else {
+        const errData = await res.json();
+        alert(errData.error || "Failed to update leave status.");
+      }
+    } catch (err) {
+      console.error("Error updating leave:", err);
+      alert("Network error. Could not update leave status.");
+    }
   };
 
   const handleLockPayroll = () => {
@@ -242,32 +282,31 @@ export default function AdminDashboardPage() {
             {pendingLeaves.length === 0 ? (
               <p className="text-sm text-zinc-500 text-center py-4">All leave requests resolved.</p>
             ) : (
-              <div className="divide-y max-h-80 overflow-y-auto pr-1">
+              <div className="divide-y divide-zinc-100 max-h-80 overflow-y-auto pr-1">
                 {pendingLeaves.map((leave) => (
-                  <div key={leave.id} className="py-4 space-y-2 first:pt-0 last:pb-0">
-                    <div className="flex justify-between">
+                  <div
+                    key={leave.id}
+                    onClick={() => setSelectedLeave(leave)}
+                    className="py-3 px-2 rounded-xl hover:bg-zinc-50 cursor-pointer transition-colors duration-150 space-y-1 first:mt-0"
+                  >
+                    <div className="flex justify-between items-start">
                       <div>
-                        <span className="font-bold text-zinc-900 block text-sm">{leave.name}</span>
-                        <span className="text-xs text-zinc-400">{leave.role} | {leave.type}</span>
+                        <span className="font-bold text-zinc-900 block text-sm hover:underline">{leave.name}</span>
+                        <span className="text-xs text-zinc-500 font-medium">{leave.role}</span>
                       </div>
-                      <span className="text-xs font-bold text-zinc-700 bg-zinc-100 px-2 py-0.5 rounded-full self-start">
-                        {leave.days} Days ({leave.dates})
+                      <span className="text-[11px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full">
+                        {leave.days} {leave.days === 1 ? "Day" : "Days"}
                       </span>
                     </div>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => handleLeaveApproval(leave.id, true)}
-                        className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg"
-                      >
-                        Approve (Paid)
-                      </button>
-                      <button
-                        onClick={() => handleLeaveApproval(leave.id, false)}
-                        className="flex-1 py-1.5 border border-rose-200 hover:bg-rose-50 text-rose-600 text-xs font-bold rounded-lg"
-                      >
-                        Reject
-                      </button>
+                    <div className="flex items-center justify-between text-xs text-zinc-400">
+                      <span>{leave.type}</span>
+                      <span className="font-medium text-zinc-500">{leave.dates}</span>
                     </div>
+                    {leave.reason && (
+                      <p className="text-[11px] text-zinc-400 truncate italic max-w-[280px]">
+                        "{leave.reason}"
+                      </p>
+                    )}
                   </div>
                 ))}
               </div>
@@ -279,6 +318,111 @@ export default function AdminDashboardPage() {
             >
               Done
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* 1b. Detailed Leave Review Modal */}
+      {selectedLeave && (
+        <div className="fixed inset-0 z-55 flex items-center justify-center p-4 bg-black/55 backdrop-blur-xs transition-opacity duration-300">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-zinc-100 space-y-6 transform scale-100 transition-transform duration-300">
+            {/* Header */}
+            <div className="flex justify-between items-center border-b border-zinc-100 pb-3">
+              <div>
+                <h3 className="text-base font-black text-zinc-950">Leave Request Details</h3>
+                <p className="text-xs text-zinc-400 mt-0.5">Review credentials and quota balances</p>
+              </div>
+              <button
+                onClick={() => setSelectedLeave(null)}
+                className="p-1 rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 transition-colors"
+              >
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Profile summary */}
+            <div className="flex items-center gap-3 bg-zinc-50 p-3 rounded-2xl border border-zinc-100">
+              <div className="h-10 w-10 rounded-full bg-zinc-900 text-white font-black text-sm flex items-center justify-center shadow-inner">
+                {selectedLeave.name.split(" ").map(n => n[0]).join("").toUpperCase()}
+              </div>
+              <div>
+                <span className="font-extrabold text-zinc-950 block text-sm">{selectedLeave.name}</span>
+                <span className="text-xs text-zinc-500 font-semibold">{selectedLeave.role}</span>
+              </div>
+            </div>
+
+            {/* Request specifics */}
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div className="bg-zinc-50/50 p-2.5 rounded-xl border border-zinc-100">
+                  <span className="text-[10px] text-zinc-400 uppercase font-extrabold tracking-wider block">Leave Type</span>
+                  <span className="font-bold text-zinc-900 mt-1 block">{selectedLeave.type}</span>
+                </div>
+                <div className="bg-zinc-50/50 p-2.5 rounded-xl border border-zinc-100">
+                  <span className="text-[10px] text-zinc-400 uppercase font-extrabold tracking-wider block">Duration</span>
+                  <span className="font-bold text-zinc-900 mt-1 block">{selectedLeave.days} {selectedLeave.days === 1 ? "Day" : "Days"}</span>
+                </div>
+              </div>
+
+              <div className="bg-zinc-50/50 p-3 rounded-xl border border-zinc-100 text-xs">
+                <span className="text-[10px] text-zinc-400 uppercase font-extrabold tracking-wider block mb-1">Requested Period</span>
+                <span className="font-bold text-zinc-800 block">{selectedLeave.dates}</span>
+              </div>
+
+              {selectedLeave.reason && (
+                <div className="bg-zinc-50/50 p-3.5 rounded-xl border border-zinc-100 text-xs space-y-1">
+                  <span className="text-[10px] text-zinc-400 uppercase font-extrabold tracking-wider block">Reason</span>
+                  <p className="text-zinc-700 italic leading-relaxed font-medium">
+                    "{selectedLeave.reason}"
+                  </p>
+                </div>
+              )}
+
+              {/* Employee leave balances */}
+              <div className="bg-zinc-50/30 p-4 rounded-2xl border border-zinc-150 space-y-3">
+                <span className="text-[10px] text-zinc-400 uppercase font-black tracking-wider block">Current Leave Quota Balances</span>
+                <div className="grid grid-cols-2 gap-2 text-center text-xs">
+                  <div className="bg-white p-2.5 rounded-xl border border-zinc-200">
+                    <span className="text-[10px] font-bold text-zinc-400 block">SICK</span>
+                    <span className="text-base font-black text-emerald-600 mt-0.5 block">
+                      {selectedLeave.leaveBalances?.sick ?? 5} / 5
+                    </span>
+                    <span className="text-[9px] text-zinc-400 mt-0.5 block">Available</span>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-xl border border-zinc-200">
+                    <span className="text-[10px] font-bold text-zinc-400 block">CASUAL</span>
+                    <span className="text-base font-black text-sky-600 mt-0.5 block">
+                      {selectedLeave.leaveBalances?.casual ?? 6} / 6
+                    </span>
+                    <span className="text-[9px] text-zinc-400 mt-0.5 block">Available</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={async () => {
+                  await handleLeaveApproval(selectedLeave.id, true);
+                  setSelectedLeave(null);
+                }}
+                className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-xs font-black rounded-xl shadow-lg shadow-emerald-600/20 transition-all cursor-pointer text-center"
+              >
+                Approve (Paid)
+              </button>
+              <button
+                onClick={async () => {
+                  await handleLeaveApproval(selectedLeave.id, false);
+                  setSelectedLeave(null);
+                }}
+                className="flex-1 py-3 border border-rose-250 bg-rose-50/50 hover:bg-rose-100 active:bg-rose-200 text-rose-600 text-xs font-black rounded-xl transition-all cursor-pointer text-center"
+              >
+                Reject
+              </button>
+            </div>
           </div>
         </div>
       )}

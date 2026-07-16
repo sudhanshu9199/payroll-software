@@ -181,6 +181,119 @@ if (isMain) {
   worker.on("failed", (job, err) => {
     console.error(`❌ [Job ${job?.id}] Failed:`, err.message);
   });
+
+  console.log("🚀 Starting BullMQ worker for 'payroll-processing'...");
+
+  const payrollWorker = new Worker(
+    "payroll-processing",
+    async (job) => {
+      const { businessId, month, year, payrollOutputs } = job.data;
+      console.log(`\n📥 [Payroll Job ${job.id}] Processing payroll database commits for Business: ${businessId}`);
+
+      const dbSession = await mongoose.startSession();
+      dbSession.startTransaction();
+      try {
+        const { PayrollRecord, Advance, Bonus } = await import("./lib/models.js");
+
+        for (const output of payrollOutputs) {
+          // Check if payroll already exists
+          const existing = await PayrollRecord.findOne({
+            businessId,
+            employeeId: output.employeeId,
+            "payPeriod.month": month,
+            "payPeriod.year": year
+          }).session(dbSession);
+
+          if (existing) {
+            if (existing.status === "Paid") {
+              throw new Error(`Payroll for employee ${output.name} is already Paid and locked.`);
+            }
+            // Overwrite existing record
+            await PayrollRecord.deleteOne({ _id: existing._id }).session(dbSession);
+          }
+
+          // Create new record
+          const record = new PayrollRecord({
+            employeeId: output.employeeId,
+            businessId,
+            payPeriod: { month, year },
+            salarySnapshot: output._salarySnapshot,
+            aggregatedData: output._aggregatedData,
+            netPay: output.netPayable,
+            status: "Generated",
+            paymentMethod: "Pending"
+          });
+          await record.save({ session: dbSession });
+
+          // Update advances
+          for (const rec of output._recoveries) {
+            const newBal = parseFloat((rec.remainingBefore - rec.amount).toFixed(2));
+            const newStatus = newBal <= 0 ? "Recovered" : "Active";
+            await Advance.updateOne(
+              { _id: rec.advanceId },
+              { $set: { balanceRemaining: newBal, status: newStatus } }
+            ).session(dbSession);
+          }
+
+          // Update bonuses
+          if (output._bonuses && output._bonuses.length > 0) {
+            await Bonus.updateMany(
+              { _id: { $in: output._bonuses } },
+              { $set: { isProcessed: true, payrollRecordId: record._id } }
+            ).session(dbSession);
+          }
+        }
+
+        await dbSession.commitTransaction();
+        dbSession.endSession();
+        console.log(`✅ [Payroll Job ${job.id}] Transaction committed successfully.`);
+
+        // Now queue the PDF generation tasks for each employee
+        const { Queue } = await import("bullmq");
+        const payslipQueue = new Queue("payslip-generation", { connection });
+        for (const output of payrollOutputs) {
+          const record = await PayrollRecord.findOne({
+            businessId,
+            employeeId: output.employeeId,
+            "payPeriod.month": month,
+            "payPeriod.year": year
+          });
+          if (record) {
+            await payslipQueue.add(
+              `payslip-${record._id}`,
+              {
+                payrollRecordId: record._id.toString(),
+                employeeId: record.employeeId.toString(),
+                businessId: record.businessId.toString(),
+                month,
+                year
+              },
+              {
+                attempts: 3,
+                backoff: { type: "exponential", delay: 5000 },
+                removeOnComplete: true
+              }
+            );
+            console.log(`[Payroll Job ${job.id}] Queued PDF generation task for employee ${output.name} (Record ID: ${record._id})`);
+          }
+        }
+      } catch (txError) {
+        await dbSession.abortTransaction();
+        dbSession.endSession();
+        console.error(`❌ [Payroll Job ${job.id}] Transaction aborted:`, txError.message);
+        throw txError;
+      }
+    },
+    { connection }
+  );
+
+  payrollWorker.on("completed", (job) => {
+    console.log(`✅ [Payroll Job ${job.id}] Completed successfully.`);
+  });
+
+  payrollWorker.on("failed", (job, err) => {
+    console.error(`❌ [Payroll Job ${job?.id}] Failed:`, err.message);
+  });
 }
 
 // Helper function to format INR currency

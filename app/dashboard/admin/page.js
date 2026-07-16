@@ -8,7 +8,10 @@ export default function AdminDashboardPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [leavesModalOpen, setLeavesModalOpen] = useState(false);
   const [dryRunOpen, setDryRunOpen] = useState(false);
-  const [payrollStatus, setPayrollStatus] = useState("DRAFT"); // "DRAFT" or "LOCKED"
+  const [payrollStatus, setPayrollStatus] = useState("DRAFT"); // "DRAFT", "PROCESSING", or "LOCKED"
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [dryRunData, setDryRunData] = useState(null); // Holds live API calculations
+  const [payrollJobId, setPayrollJobId] = useState(null); // Tracks async processing
   
   // Real leaves state
   const [leaves, setLeaves] = useState([]);
@@ -87,9 +90,94 @@ export default function AdminDashboardPage() {
     }
   };
 
-  const handleLockPayroll = () => {
+  const handleGeneratePayroll = async () => {
+    setIsGenerating(true);
+    try {
+      const businessId = employees[0]?.businessId || "60b8d295f1d2c72b8c9b14f1"; 
+      
+      const res = await fetch("/api/v1/payroll/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          businessId,
+          payPeriod: { month: 6, year: 2026 }, 
+          options: { dryRun: true }
+        })
+      });
+      
+      const data = await res.json();
+      if (data.success) {
+        setDryRunData(data.payroll);
+        setDryRunOpen(true);
+      } else {
+        alert("Payroll Generation Failed: " + data.error);
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Network error during generation.");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  // Handle polling when payrollJobId changes
+  useEffect(() => {
+    if (!payrollJobId) return;
+
+    let intervalId = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/v1/payroll/status?jobId=${payrollJobId}`);
+        if (!res.ok) return;
+
+        const data = await res.json();
+        if (data.success) {
+          if (data.state === "completed") {
+            setPayrollStatus("LOCKED");
+            setPayrollJobId(null);
+            clearInterval(intervalId);
+          } else if (data.state === "failed") {
+            setPayrollStatus("DRAFT");
+            setPayrollJobId(null);
+            clearInterval(intervalId);
+            alert(`Payroll processing failed: ${data.failedReason || "Unknown reason"}`);
+          }
+        }
+      } catch (err) {
+        console.error("Error polling job status:", err);
+      }
+    }, 1000);
+
+    return () => clearInterval(intervalId);
+  }, [payrollJobId]);
+
+  const handleLockPayroll = async () => {
     setDryRunOpen(false);
-    setPayrollStatus("LOCKED");
+    setPayrollStatus("PROCESSING"); 
+    
+    const businessId = employees[0]?.businessId;
+
+    try {
+      const res = await fetch("/api/v1/payroll/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          businessId,
+          payPeriod: { month: 6, year: 2026 },
+          options: { dryRun: false }
+        })
+      });
+      
+      const data = await res.json();
+      if (res.status === 202 && data.jobId) {
+        setPayrollJobId(data.jobId);
+      } else {
+        setPayrollStatus("DRAFT");
+        alert("Failed to lock payroll: " + (data.error || "Queue rejected the job."));
+      }
+    } catch (error) {
+      setPayrollStatus("DRAFT");
+      alert("Failed to lock payroll.");
+    }
   };
 
   const filteredEmployees = employees.filter(emp =>
@@ -136,11 +224,17 @@ export default function AdminDashboardPage() {
       <div className="bg-white border border-zinc-200 rounded-2xl p-6 shadow-sm flex flex-col md:flex-row justify-between items-center gap-6">
         <div className="space-y-1 text-center md:text-left">
           <h2 className="text-lg font-bold text-zinc-900">
-            {payrollStatus === "LOCKED" ? "June 2026 Payroll Processed" : "Ready to process June 2026?"}
+            {payrollStatus === "LOCKED" 
+              ? "June 2026 Payroll Processed" 
+              : payrollStatus === "PROCESSING" 
+              ? "Processing June 2026..." 
+              : "Ready to process June 2026?"}
           </h2>
           <p className="text-sm text-zinc-500">
             {payrollStatus === "LOCKED"
               ? "All payslips have been locked. Notifications sent to employees."
+              : payrollStatus === "PROCESSING"
+              ? "Processing database transactions and generating employee payslips in background..."
               : `Attendance logs finalized. ${pendingLeaves.length} pending leave request${pendingLeaves.length === 1 ? "" : "s"}.`}
           </p>
         </div>
@@ -161,6 +255,14 @@ export default function AdminDashboardPage() {
                 Export Bank File
               </button>
             </>
+          ) : payrollStatus === "PROCESSING" ? (
+            <div className="flex items-center gap-2 text-zinc-500 font-semibold text-sm">
+              <svg className="animate-spin h-5 w-5 text-zinc-950" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+              Queueing background processing...
+            </div>
           ) : (
             <>
               {pendingLeaves.length > 0 && (
@@ -172,11 +274,11 @@ export default function AdminDashboardPage() {
                 </button>
               )}
               <button
-                onClick={() => setDryRunOpen(true)}
-                disabled={pendingLeaves.length > 0}
+                onClick={handleGeneratePayroll}
+                disabled={pendingLeaves.length > 0 || isGenerating}
                 className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-zinc-100 disabled:text-zinc-400 disabled:border-zinc-200 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg shadow-sm"
               >
-                GENERATE PAYROLL
+                {isGenerating ? "CALCULATING..." : "GENERATE PAYROLL"}
               </button>
             </>
           )}
@@ -428,15 +530,15 @@ export default function AdminDashboardPage() {
       )}
 
       {/* 2. Dry Run Payroll Slider/Drawer */}
-      {dryRunOpen && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-black/30">
+      {dryRunOpen && dryRunData && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-black/30 backdrop-blur-xs">
           <div className="bg-white h-full w-full max-w-lg p-6 shadow-2xl flex flex-col justify-between border-l border-zinc-200 overflow-y-auto">
             <div className="space-y-6">
               <div className="flex justify-between items-center border-b pb-4">
                 <div>
                   <h3 className="text-lg font-black text-zinc-950 tracking-tight">June 2026 Dry Run Preview</h3>
                   <span className="text-xs text-emerald-600 font-bold bg-emerald-50 px-2 py-0.5 rounded-full mt-1 inline-block">
-                    Preview Mode (No changes committed)
+                    {dryRunData.length} Records Calculated
                   </span>
                 </div>
                 <button onClick={() => setDryRunOpen(false)} className="text-zinc-400 hover:text-zinc-600">
@@ -446,27 +548,49 @@ export default function AdminDashboardPage() {
                 </button>
               </div>
 
-              {/* Individual breakdowns */}
+              {/* Dynamic Breakdowns populated from API Response */}
               <div className="space-y-4 divide-y">
-                {employees.map((emp) => {
-                  const base = emp.basePay || 0;
-                  const adv = emp.advances || 0;
-                  const net = base - adv;
+                {dryRunData.map((empOutput) => {
+                  const grossEarnings = empOutput.earnings.basicPay + 
+                                        empOutput.earnings.allowances + 
+                                        empOutput.earnings.overtimePay + 
+                                        empOutput.earnings.bonuses.reduce((sum, b) => sum + b.amount, 0);
+
+                  const statutoryDeductions = Object.entries(empOutput.deductions)
+                    .filter(([key]) => key !== "unpaidLeavesAmount" && key !== "advanceRecovery")
+                    .reduce((sum, [_, val]) => sum + val, 0);
+
                   return (
-                    <div key={emp.id} className="space-y-2 py-2 first:pt-0">
+                    <div key={empOutput.employeeId} className="space-y-2 py-2 first:pt-0">
                       <div className="flex justify-between font-bold">
-                        <span className="text-zinc-900 text-sm">{emp.name} ({emp.role})</span>
-                        <span className="text-zinc-900 text-sm">₹{net.toLocaleString("en-IN")}</span>
+                        <span className="text-zinc-900 text-sm">{empOutput.name}</span>
+                        <span className="text-zinc-900 text-sm">₹{empOutput.netPayable.toLocaleString("en-IN")}</span>
                       </div>
+                      
                       <div className="text-xs text-zinc-500 space-y-1">
                         <div className="flex justify-between">
-                          <span>Base Salary</span>
-                          <span>₹{base.toLocaleString("en-IN")}</span>
+                          <span>Gross Earnings</span>
+                          <span>₹{grossEarnings.toLocaleString("en-IN")}</span>
                         </div>
-                        {adv > 0 && (
+                        
+                        {empOutput.deductions.unpaidLeavesAmount > 0 && (
+                          <div className="flex justify-between text-amber-600">
+                            <span>LWP (Unpaid Leaves & Absences)</span>
+                            <span>-₹{empOutput.deductions.unpaidLeavesAmount.toLocaleString("en-IN")}</span>
+                          </div>
+                        )}
+                        
+                        {statutoryDeductions > 0 && (
                           <div className="flex justify-between text-rose-600">
-                            <span>Advance Deducted</span>
-                            <span>-₹{adv.toLocaleString("en-IN")}</span>
+                            <span>Statutory Deductions (PF/ESIC/PT)</span>
+                            <span>-₹{statutoryDeductions.toLocaleString("en-IN")}</span>
+                          </div>
+                        )}
+                        
+                        {empOutput.deductions.advanceRecovery > 0 && (
+                          <div className="flex justify-between text-rose-600">
+                            <span>Advance Recovery</span>
+                            <span>-₹{empOutput.deductions.advanceRecovery.toLocaleString("en-IN")}</span>
                           </div>
                         )}
                       </div>
@@ -475,34 +599,45 @@ export default function AdminDashboardPage() {
                 })}
               </div>
 
-              {/* Aggregation */}
+              {/* Engine Aggregation */}
               <div className="bg-zinc-50 border rounded-xl p-4 space-y-2 mt-6">
                 <div className="flex justify-between text-xs text-zinc-500 font-semibold">
-                  <span>Gross Payout ({employees.length} Staff)</span>
-                  <span>₹{totalEstimatedPayroll.toLocaleString("en-IN")}</span>
+                  <span>Total Gross Payout</span>
+                  <span>
+                    ₹{dryRunData.reduce((sum, e) => {
+                      const gross = e.earnings.basicPay + 
+                                    e.earnings.allowances + 
+                                    e.earnings.overtimePay + 
+                                    e.earnings.bonuses.reduce((s, b) => s + b.amount, 0);
+                      return sum + gross;
+                    }, 0).toLocaleString("en-IN")}
+                  </span>
                 </div>
                 <div className="flex justify-between text-xs text-rose-600 font-semibold">
-                  <span>Advance Deductions</span>
-                  <span>-₹{totalAdvances.toLocaleString("en-IN")}</span>
+                  <span>Total Recoveries & Deductions</span>
+                  <span>
+                    -₹{dryRunData.reduce((sum, e) => {
+                      const stat = Object.entries(e.deductions)
+                        .filter(([key]) => key !== "unpaidLeavesAmount" && key !== "advanceRecovery")
+                        .reduce((s, [_, val]) => s + val, 0);
+                      return sum + e.deductions.advanceRecovery + stat + e.deductions.unpaidLeavesAmount;
+                    }, 0).toLocaleString("en-IN")}
+                  </span>
                 </div>
                 <div className="flex justify-between text-sm font-bold border-t border-dashed pt-2 text-zinc-950">
                   <span>Total Cash Required</span>
-                  <span>₹{(totalEstimatedPayroll - totalAdvances).toLocaleString("en-IN")}</span>
+                  <span>
+                    ₹{dryRunData.reduce((sum, e) => sum + e.netPayable, 0).toLocaleString("en-IN")}
+                  </span>
                 </div>
               </div>
             </div>
 
             <div className="flex gap-3 pt-6 border-t mt-6">
-              <button
-                onClick={() => setDryRunOpen(false)}
-                className="flex-1 py-2.5 border rounded-lg text-sm font-semibold hover:bg-zinc-50"
-              >
+              <button onClick={() => setDryRunOpen(false)} className="flex-1 py-2.5 border rounded-lg text-sm font-semibold hover:bg-zinc-50">
                 Cancel
               </button>
-              <button
-                onClick={handleLockPayroll}
-                className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-lg shadow-sm"
-              >
+              <button onClick={handleLockPayroll} className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-lg shadow-sm">
                 Confirm & Lock
               </button>
             </div>

@@ -14,7 +14,7 @@ import {
   Business
 } from "@/lib/models";
 import { verifyJWT } from "@/lib/auth";
-import { getPayslipQueue } from "@/lib/queue";
+import { getPayslipQueue, getPayrollQueue } from "@/lib/queue";
 import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc";
 import timezone from "dayjs/plugin/timezone";
@@ -154,7 +154,25 @@ export async function POST(request) {
         }
 
         const baseAmount = salaryRecord.baseAmount || 0;
-        const dailyBaseRate = baseAmount / workingDaysPerMonth;
+        const dailyBaseRate = baseAmount / daysInMonth;
+
+        // Accumulate full contracted earnings day-by-day
+        if (salaryRecord.isAdvancedMode && salaryRecord.components) {
+          salaryRecord.components.forEach(c => {
+            if (c.type === "Earning") {
+              const isBasic = c.name.toLowerCase().includes("basic");
+              const dailyVal = (c.amount || 0) / daysInMonth;
+              if (isBasic) {
+                basicPay += dailyVal;
+              } else {
+                allowances += dailyVal;
+              }
+              calculatedComponents[c.name] = (calculatedComponents[c.name] || 0) + dailyVal;
+            }
+          });
+        } else {
+          basicPay += dailyBaseRate;
+        }
 
         // Check attendance
         const att = attendances.find(a => dayjs(a.date).tz(TIMEZONE).isSame(currentDay, "day"));
@@ -174,24 +192,6 @@ export async function POST(request) {
             dailyOtPay = otHours * hourlyRate * multiplier;
           }
           overtimePay += dailyOtPay;
-
-          // Add daily earnings
-          if (salaryRecord.isAdvancedMode && salaryRecord.components) {
-            salaryRecord.components.forEach(c => {
-              if (c.type === "Earning") {
-                const isBasic = c.name.toLowerCase().includes("basic");
-                const dailyVal = (c.amount || 0) / workingDaysPerMonth;
-                if (isBasic) {
-                  basicPay += dailyVal;
-                } else {
-                  allowances += dailyVal;
-                }
-                calculatedComponents[c.name] = (calculatedComponents[c.name] || 0) + dailyVal;
-              }
-            });
-          } else {
-            basicPay += dailyBaseRate;
-          }
         } else {
           // Check approved leaves
           const leave = leaves.find(l => {
@@ -205,49 +205,13 @@ export async function POST(request) {
               unpaidLeavesCount++;
               unpaidLeavesAmount += dailyBaseRate;
             }
-            // If it is paid leave, they are eligible for pay on this day.
-            if (leave.isPaid !== false && leave.type !== "Unpaid") {
-              if (salaryRecord.isAdvancedMode && salaryRecord.components) {
-                salaryRecord.components.forEach(c => {
-                  if (c.type === "Earning") {
-                    const isBasic = c.name.toLowerCase().includes("basic");
-                    const dailyVal = (c.amount || 0) / workingDaysPerMonth;
-                    if (isBasic) {
-                      basicPay += dailyVal;
-                    } else {
-                      allowances += dailyVal;
-                    }
-                    calculatedComponents[c.name] = (calculatedComponents[c.name] || 0) + dailyVal;
-                  }
-                });
-              } else {
-                basicPay += dailyBaseRate;
-              }
-            }
           } else {
             // No attendance, no leave
             const isSunday = currentDay.day() === 0;
-            if (isSunday) {
-              // Sunday is paid weekly off
-              if (salaryRecord.isAdvancedMode && salaryRecord.components) {
-                salaryRecord.components.forEach(c => {
-                  if (c.type === "Earning") {
-                    const isBasic = c.name.toLowerCase().includes("basic");
-                    const dailyVal = (c.amount || 0) / workingDaysPerMonth;
-                    if (isBasic) {
-                      basicPay += dailyVal;
-                    } else {
-                      allowances += dailyVal;
-                    }
-                    calculatedComponents[c.name] = (calculatedComponents[c.name] || 0) + dailyVal;
-                  }
-                });
-              } else {
-                basicPay += dailyBaseRate;
-              }
-            } else {
+            if (!isSunday) {
               // Absent
               totalAbsentDays++;
+              unpaidLeavesAmount += dailyBaseRate;
             }
           }
         }
@@ -258,7 +222,7 @@ export async function POST(request) {
       // Calculate basePayableDays and payableDays
       let basePayableDays = activeDays;
       if (activeDays >= daysInMonth) {
-        basePayableDays = workingDaysPerMonth;
+        basePayableDays = daysInMonth;
       }
       const payableDays = Math.max(0, basePayableDays - unpaidLeavesCount - totalAbsentDays);
 
@@ -299,7 +263,7 @@ export async function POST(request) {
           if (isEligible) {
             salaryRecord.components.forEach(c => {
               if (c.type === "Deduction") {
-                const dailyVal = (c.amount || 0) / workingDaysPerMonth;
+                const dailyVal = (c.amount || 0) / daysInMonth;
                 otherDeductions[c.name] = (otherDeductions[c.name] || 0) + dailyVal;
                 totalOtherDeductions += dailyVal;
               }
@@ -318,9 +282,16 @@ export async function POST(request) {
       // Calculate total earnings
       const totalEarnings = basicPay + allowances + overtimePay + totalBonusAmount;
 
-      // Apply advance recovery capping
-      const maxDeductionAllowed = totalEarnings * (maxDeductionPercentage / 100);
-      const maxAdvanceRecoveryAllowed = Math.max(0, maxDeductionAllowed - unpaidLeavesAmount);
+      // Phase 2: The Deduction Waterfall
+      // 1. Statutory Obligations & Capping
+      // Statutory max deduction is a percentage of GROSS, ensuring minimum take-home pay
+      const absoluteMaxDeduction = totalEarnings * (maxDeductionPercentage / 100); 
+      
+      // 2. Deduction Priority: Taxes -> Unpaid Leaves/PF/ESIC -> Private Advances
+      const statutoryAndLeaveDeductions = totalOtherDeductions + unpaidLeavesAmount;
+      
+      // 3. Calculate remaining safe buffer for advance recovery
+      const maxAdvanceRecoveryAllowed = Math.max(0, absoluteMaxDeduction - statutoryAndLeaveDeductions);
 
       let totalAdvanceRecovery = 0;
       const recoveriesList = [];
@@ -337,7 +308,7 @@ export async function POST(request) {
               remainingBefore: adv.balanceRemaining
             });
           }
-          break; // capped out
+          break; // Hit the compliance ceiling, defer remaining advance to next month
         } else {
           totalAdvanceRecovery += tentativeRecovery;
           recoveriesList.push({
@@ -351,7 +322,7 @@ export async function POST(request) {
       totalAdvanceRecovery = parseFloat(totalAdvanceRecovery.toFixed(2));
 
       // Calculate final Net Payable
-      const netPayable = parseFloat((totalEarnings - unpaidLeavesAmount - totalAdvanceRecovery - totalOtherDeductions).toFixed(2));
+      const netPayable = parseFloat((totalEarnings - statutoryAndLeaveDeductions - totalAdvanceRecovery).toFixed(2));
 
       // Prepare payload
       const output = {
@@ -372,7 +343,7 @@ export async function POST(request) {
           ...otherDeductions
         },
         netPayable,
-        status: dryRun ? "Draft" : "Generated",
+        status: dryRun ? "Draft" : "Queued",
         // Internal details for non-dryRun updates
         _recoveries: recoveriesList,
         _bonuses: pendingBonuses.map(b => b._id),
@@ -392,103 +363,24 @@ export async function POST(request) {
       payrollOutputs.push(output);
     }
 
-    // 5. If not dryRun, write changes in transaction
+    // Phase 3: Background Worker Offloading
     if (!dryRun) {
-      const dbSession = await mongoose.startSession();
-      dbSession.startTransaction();
-      try {
-        for (const output of payrollOutputs) {
-          // Check if payroll already exists
-          const existing = await PayrollRecord.findOne({
-            businessId,
-            employeeId: output.employeeId,
-            "payPeriod.month": month,
-            "payPeriod.year": year
-          }).session(dbSession);
+      const queue = getPayrollQueue(); 
+      const job = await queue.add(`process-payroll-${businessId}-${month}-${year}`, {
+        businessId,
+        month,
+        year,
+        payrollOutputs
+      }, { removeOnComplete: true });
 
-          if (existing) {
-            if (existing.status === "Paid") {
-              throw new Error(`Payroll for employee ${output.name} is already Paid and locked.`);
-            }
-            // Overwrite existing record
-            await PayrollRecord.deleteOne({ _id: existing._id }).session(dbSession);
-          }
-
-          // Create new record
-          const record = new PayrollRecord({
-            employeeId: output.employeeId,
-            businessId,
-            payPeriod: { month, year },
-            salarySnapshot: output._salarySnapshot,
-            aggregatedData: output._aggregatedData,
-            netPay: output.netPayable,
-            status: "Generated",
-            paymentMethod: "Pending"
-          });
-          await record.save({ session: dbSession });
-
-          // Update advances
-          for (const rec of output._recoveries) {
-            const newBal = parseFloat((rec.remainingBefore - rec.amount).toFixed(2));
-            const newStatus = newBal <= 0 ? "Recovered" : "Active";
-            await Advance.updateOne(
-              { _id: rec.advanceId },
-              { $set: { balanceRemaining: newBal, status: newStatus } }
-            ).session(dbSession);
-          }
-
-          // Update bonuses
-          if (output._bonuses.length > 0) {
-            await Bonus.updateMany(
-              { _id: { $in: output._bonuses } },
-              { $set: { isProcessed: true, payrollRecordId: record._id } }
-            ).session(dbSession);
-          }
-        }
-
-        await dbSession.commitTransaction();
-        dbSession.endSession();
-
-        // Queue PDF generation tasks after successful transactional commit
-        try {
-          const queue = getPayslipQueue();
-          for (const output of payrollOutputs) {
-            const record = await PayrollRecord.findOne({
-              businessId,
-              employeeId: output.employeeId,
-              "payPeriod.month": month,
-              "payPeriod.year": year
-            });
-            if (record) {
-              await queue.add(
-                `payslip-${record._id}`,
-                {
-                  payrollRecordId: record._id.toString(),
-                  employeeId: record.employeeId.toString(),
-                  businessId: record.businessId.toString(),
-                  month,
-                  year
-                },
-                {
-                  attempts: 3,
-                  backoff: { type: "exponential", delay: 5000 },
-                  removeOnComplete: true
-                }
-              );
-              console.log(`[Generate API] Queued PDF generation task for employee ${output.name} (Record ID: ${record._id})`);
-            }
-          }
-        } catch (queueError) {
-          console.error("Queue dispatch failed (non-blocking for payroll commit):", queueError);
-        }
-      } catch (txError) {
-        await dbSession.abortTransaction();
-        dbSession.endSession();
-        throw txError;
-      }
+      return NextResponse.json({ 
+        success: true, 
+        message: "Payroll processing queued successfully.", 
+        jobId: job.id 
+      }, { status: 202 });
     }
 
-    // Clean internal properties before returning response
+    // Clean internal properties before returning response (dryRun)
     const cleanOutputs = payrollOutputs.map(out => {
       const { _recoveries, _bonuses, _salarySnapshot, _aggregatedData, ...clean } = out;
       return clean;

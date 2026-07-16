@@ -14,6 +14,7 @@ import {
   Business
 } from "@/lib/models";
 import { verifyJWT } from "@/lib/auth";
+import { getPayslipQueue } from "@/lib/queue";
 import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc";
 import timezone from "dayjs/plugin/timezone";
@@ -447,6 +448,39 @@ export async function POST(request) {
 
         await dbSession.commitTransaction();
         dbSession.endSession();
+
+        // Queue PDF generation tasks after successful transactional commit
+        try {
+          const queue = getPayslipQueue();
+          for (const output of payrollOutputs) {
+            const record = await PayrollRecord.findOne({
+              businessId,
+              employeeId: output.employeeId,
+              "payPeriod.month": month,
+              "payPeriod.year": year
+            });
+            if (record) {
+              await queue.add(
+                `payslip-${record._id}`,
+                {
+                  payrollRecordId: record._id.toString(),
+                  employeeId: record.employeeId.toString(),
+                  businessId: record.businessId.toString(),
+                  month,
+                  year
+                },
+                {
+                  attempts: 3,
+                  backoff: { type: "exponential", delay: 5000 },
+                  removeOnComplete: true
+                }
+              );
+              console.log(`[Generate API] Queued PDF generation task for employee ${output.name} (Record ID: ${record._id})`);
+            }
+          }
+        } catch (queueError) {
+          console.error("Queue dispatch failed (non-blocking for payroll commit):", queueError);
+        }
       } catch (txError) {
         await dbSession.abortTransaction();
         dbSession.endSession();

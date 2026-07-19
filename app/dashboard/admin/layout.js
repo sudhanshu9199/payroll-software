@@ -1,13 +1,39 @@
 // app/dashboard/admin/layout.js
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 export default function AdminLayout({ children }) {
   const pathname = usePathname();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [user, setUser] = useState({ name: "Admin", email: "" });
+  const [business, setBusiness] = useState({ name: "TaskFlow Company" });
+  const [currentDate, setCurrentDate] = useState("");
+
+  useEffect(() => {
+    // Fetch profile
+    fetch("/api/v1/auth/me")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success) {
+          if (data.user) setUser(data.user);
+          if (data.business) setBusiness(data.business);
+        }
+      })
+      .catch((err) => console.error("Failed to load profile:", err));
+
+    // Dynamic current date
+    const today = new Date();
+    const formatted = today.toLocaleDateString("en-IN", {
+      weekday: "short",
+      day: "2-digit",
+      month: "short",
+      year: "numeric"
+    });
+    setCurrentDate(formatted);
+  }, []);
 
   const navigation = [
     {
@@ -88,18 +114,18 @@ export default function AdminLayout({ children }) {
           {/* Context Details */}
           <div className="flex items-center gap-2">
             <span className="text-md font-bold text-zinc-900">
-              Rasoi Royale <span className="text-zinc-400 font-normal">| Hajipur Branch</span>
+              {business.name}
             </span>
             <span className="hidden sm:inline bg-zinc-100 border text-zinc-600 text-xs px-2.5 py-0.5 rounded-full font-medium">
-              June 2026 ▾
+              {currentDate}
             </span>
           </div>
 
           {/* User Profile */}
           <div className="flex items-center gap-3">
-            <span className="text-sm font-bold text-zinc-900 hidden sm:inline">Xavier</span>
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-zinc-950 font-semibold text-white border text-sm shadow-sm">
-              X
+            <span className="text-sm font-bold text-zinc-900 hidden sm:inline">{user.name}</span>
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-zinc-950 font-semibold text-white border text-sm shadow-sm uppercase">
+              {user.name ? user.name.charAt(0) : "A"}
             </div>
           </div>
         </header>

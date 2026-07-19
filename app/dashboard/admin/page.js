@@ -57,6 +57,28 @@ export default function AdminDashboardPage() {
     fetchLeaves();
   }, []);
 
+  useEffect(() => {
+    if (!employees || employees.length === 0) return;
+    const businessId = employees[0]?.businessId;
+    if (!businessId) return;
+
+    async function checkPayrollStatus() {
+      try {
+        const res = await fetch(`/api/v1/payroll/generate?businessId=${businessId}&month=6&year=2026`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && data.status === "LOCKED") {
+            setPayrollStatus("LOCKED");
+            setDryRunData(data.payroll);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to check payroll status:", err);
+      }
+    }
+    checkPayrollStatus();
+  }, [employees]);
+
   const totalEstimatedPayroll = employees.reduce((sum, emp) => sum + (emp.basePay || 0), 0);
   const totalAdvances = employees.reduce((sum, emp) => sum + (emp.advances || 0), 0);
   const activeStaffCount = employees.filter(emp => emp.status === "Active").length;
@@ -135,6 +157,19 @@ export default function AdminDashboardPage() {
             setPayrollStatus("LOCKED");
             setPayrollJobId(null);
             clearInterval(intervalId);
+
+            // Fetch finalized payroll records to populate dryRunData
+            const businessId = employees[0]?.businessId;
+            if (businessId) {
+              fetch(`/api/v1/payroll/generate?businessId=${businessId}&month=6&year=2026`)
+                .then((r) => r.json())
+                .then((d) => {
+                  if (d.success && d.payroll) {
+                    setDryRunData(d.payroll);
+                  }
+                })
+                .catch((err) => console.error("Error fetching locked payroll records:", err));
+            }
           } else if (data.state === "failed") {
             setPayrollStatus("DRAFT");
             setPayrollJobId(null);
@@ -178,6 +213,63 @@ export default function AdminDashboardPage() {
       setPayrollStatus("DRAFT");
       alert("Failed to lock payroll.");
     }
+  };
+
+  const handleBankExport = () => {
+    if (!dryRunData || dryRunData.length === 0) {
+      alert("No finalized payroll data available to export.");
+      return;
+    }
+
+    // Standard HDFC / ICICI Corporate Salary Upload Format
+    const headers = [
+      "Transaction Type",
+      "Beneficiary Account Number",
+      "Beneficiary Name",
+      "Amount",
+      "Payment Mode",
+      "Email ID",
+      "Transaction Date",
+      "IFSC Code",
+      "Remarks"
+    ];
+
+    const currentDate = new Date().toLocaleDateString('en-GB');
+
+    const rows = dryRunData.map((empOutput) => {
+      const empDetails = employees.find(e => e.id === empOutput.employeeId) || {};
+      const bankDetails = empDetails.bankDetails || {};
+      const transferType = empOutput.netPayable >= 200000 ? "RTGS" : "NEFT";
+      
+      return [
+        transferType,
+        bankDetails.accountNumber || "MISSING_AC", 
+        empOutput.name,
+        empOutput.netPayable,
+        "ACC",
+        empDetails.email || "",
+        currentDate,
+        bankDetails.ifscCode || "MISSING_IFSC",
+        `Salary_${empOutput.payPeriod.month}_${empOutput.payPeriod.year}`
+      ];
+    });
+
+    const escapeCSV = (str) => `"${String(str).replace(/"/g, '""')}"`;
+    
+    const csvContent = [
+      headers.map(escapeCSV).join(","),
+      ...rows.map(row => row.map(escapeCSV).join(","))
+    ].join("\n");
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `Bank_Export_${Date.now()}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const filteredEmployees = employees.filter(emp =>
@@ -249,7 +341,7 @@ export default function AdminDashboardPage() {
                 Send via WhatsApp
               </button>
               <button
-                onClick={() => alert("Downloading CSV file for bulk bank transfers.")}
+                onClick={handleBankExport}
                 className="px-4 py-2.5 border border-zinc-300 hover:bg-zinc-50 text-zinc-700 text-sm font-semibold rounded-lg"
               >
                 Export Bank File

@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { Worker } from "bullmq";
+import { Worker, Queue } from "bullmq";
 import Redis from "ioredis";
 import mongoose from "mongoose";
 import puppeteer from "puppeteer";
@@ -8,6 +8,7 @@ import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc.js";
 import timezone from "dayjs/plugin/timezone.js";
 import { fileURLToPath } from "url";
+import nodemailer from "nodemailer";
 
 // Setup Dayjs timezone support
 dayjs.extend(utc);
@@ -23,7 +24,11 @@ try {
       const idx = trimmed.indexOf("=");
       if (idx !== -1) {
         const key = trimmed.slice(0, idx).trim();
-        const val = trimmed.slice(idx + 1).trim();
+        let val = trimmed.slice(idx + 1).trim();
+        // Remove surrounding quotes if present
+        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+          val = val.slice(1, -1);
+        }
         process.env[key] = val;
       }
     }
@@ -80,6 +85,8 @@ if (isMain) {
   connection.on("error", (err) => {
     console.error("Redis Connection Error (Worker):", err);
   });
+
+  const notificationQueue = new Queue("notification-delivery", { connection });
 
   console.log("🚀 Starting BullMQ worker for 'payslip-generation'...");
 
@@ -164,14 +171,41 @@ if (isMain) {
         );
         console.log(`💾 [Job ${job.id}] Saved payslipUrl: ${payslipUrl}`);
 
-        // Dispatch mock notification ping
-        sendMockNotification(employee, record, month, year, payslipUrl);
+        // CHAINING: Push to Notification Queue upon successful PDF generation
+        const monthNames = [
+          "January", "February", "March", "April", "May", "June",
+          "July", "August", "September", "October", "November", "December"
+        ];
+        const monthStr = monthNames[month - 1] || "";
+        const periodStr = `${monthStr} ${year}`;
+        
+        await notificationQueue.add(
+          "send-alerts",
+          {
+            employeeName: employee.name,
+            email: employee.email,
+            phone: employee.phoneNumber,
+            fileUrl: payslipUrl,
+            month: periodStr,
+            netPay: record.netPay
+          },
+          {
+            attempts: 3, // Retry 3 times if WhatsApp/Email fails
+            backoff: { type: "exponential", delay: 5000 },
+            removeOnComplete: { count: 100, age: 3600 }
+          }
+        );
+        console.log(`🔗 [Job ${job.id}] Chained notification-delivery alert task for ${employee.name}`);
 
       } finally {
         await browser.close();
       }
     },
-    { connection }
+    {
+      connection,
+      drainDelay: 60, // Poll every 60 seconds when empty (saves Upstash commands)
+      stalledInterval: 300000, // Check for stalled jobs every 5 minutes (saves commands)
+    }
   );
 
   worker.on("completed", (job) => {
@@ -271,7 +305,7 @@ if (isMain) {
               {
                 attempts: 3,
                 backoff: { type: "exponential", delay: 5000 },
-                removeOnComplete: true
+                removeOnComplete: { count: 100, age: 3600 }
               }
             );
             console.log(`[Payroll Job ${job.id}] Queued PDF generation task for employee ${output.name} (Record ID: ${record._id})`);
@@ -284,7 +318,11 @@ if (isMain) {
         throw txError;
       }
     },
-    { connection }
+    {
+      connection,
+      drainDelay: 60, // Poll every 60 seconds when empty (saves Upstash commands)
+      stalledInterval: 300000, // Check for stalled jobs every 5 minutes (saves commands)
+    }
   );
 
   payrollWorker.on("completed", (job) => {
@@ -293,6 +331,120 @@ if (isMain) {
 
   payrollWorker.on("failed", (job, err) => {
     console.error(`❌ [Payroll Job ${job?.id}] Failed:`, err.message);
+  });
+
+  console.log("🚀 Starting BullMQ worker for 'notification-delivery'...");
+
+  const transporter = nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_APP_PASSWORD
+    }
+  });
+
+  const notificationWorker = new Worker(
+    "notification-delivery",
+    async (job) => {
+      const { employeeName, email, phone, fileUrl, month, netPay } = job.data;
+      console.log(`\n📥 [Notification Job ${job.id}] Dispatching alerts to ${employeeName}`);
+
+      const tasks = [];
+
+      // 1. Send Email (Free forever via Nodemailer)
+      if (email && process.env.SMTP_USER && process.env.SMTP_APP_PASSWORD) {
+        const downloadLink = fileUrl.startsWith("http") ? fileUrl : `http://localhost:3000${fileUrl}`;
+        tasks.push(
+          transporter.sendMail({
+            from: `"HR Department" <${process.env.SMTP_USER}>`,
+            to: email,
+            subject: `Payslip for ${month}`,
+            html: `<p>Hi ${employeeName},</p>
+                   <p>Your salary for ${month} of <strong>₹${netPay.toLocaleString("en-IN")}</strong> has been processed.</p>
+                   <p>Download your payslip here: <a href="${downloadLink}">Download PDF</a></p>`
+          })
+        );
+        console.log(`✉️ [Notification Job ${job.id}] Queued email dispatch to ${email}`);
+      } else {
+        console.log(`✉️ [Notification Job ${job.id}] Skipping email dispatch (no email address or SMTP credentials config).`);
+      }
+
+      // 2. Send WhatsApp (Meta Official Cloud API)
+      if (phone && process.env.WA_PHONE_NUMBER_ID && process.env.WA_ACCESS_TOKEN) {
+        const downloadLink = fileUrl.startsWith("http") ? fileUrl : `http://localhost:3000${fileUrl}`;
+        const waPayload = {
+          messaging_product: "whatsapp",
+          to: phone,
+          type: "template",
+          template: {
+            name: "payslip_alert",
+            language: { code: "en" },
+            components: [
+              {
+                type: "header",
+                parameters: [
+                  {
+                    type: "document",
+                    document: {
+                      link: downloadLink,
+                      filename: `Payslip_${month.replace(/\s+/g, "_")}.pdf`
+                    }
+                  }
+                ]
+              },
+              {
+                type: "body",
+                parameters: [
+                  { type: "text", text: employeeName },
+                  { type: "text", text: month }
+                ]
+              }
+            ]
+          }
+        };
+
+        tasks.push(
+          fetch(`https://graph.facebook.com/v19.0/${process.env.WA_PHONE_NUMBER_ID}/messages`, {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${process.env.WA_ACCESS_TOKEN}`,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify(waPayload)
+          }).then(async res => {
+            if (!res.ok) {
+              const errText = await res.text();
+              throw new Error(`WhatsApp API Failed: ${errText}`);
+            }
+            console.log(`💬 [Notification Job ${job.id}] WhatsApp API sent successfully.`);
+          })
+        );
+        console.log(`💬 [Notification Job ${job.id}] Queued WhatsApp dispatch to ${phone}`);
+      } else {
+        console.log(`💬 [Notification Job ${job.id}] Skipping WhatsApp API dispatch (no credentials). Falling back to console log:`);
+        const downloadLink = fileUrl.startsWith("http") ? fileUrl : `http://localhost:3000${fileUrl}`;
+        console.log(`[WhatsApp Fallback Log] To: ${employeeName} (${phone}) | Message: Dear ${employeeName}, your payslip for ${month} has been finalized. Download: ${downloadLink}`);
+      }
+
+      if (tasks.length > 0) {
+        await Promise.all(tasks);
+      }
+      return { success: true };
+    },
+    {
+      connection,
+      concurrency: 10,
+      drainDelay: 60, // Poll every 60 seconds when empty (saves Upstash commands)
+      stalledInterval: 300000, // Check for stalled jobs every 5 minutes (saves commands)
+    }
+  );
+
+  notificationWorker.on("completed", (job) => {
+    console.log("✅ [Notification Job ${job.id}] Completed successfully.");
+  });
+
+  notificationWorker.on("failed", (job, err) => {
+    console.error(`❌ [Notification Job ${job?.id}] Failed:`, err.message);
   });
 }
 

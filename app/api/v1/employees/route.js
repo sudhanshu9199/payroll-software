@@ -68,6 +68,9 @@ export async function GET(request) {
           basePay: salary ? salary.baseAmount : 0,
           advances: totalAdvances,
           attendance: `${attendanceCount || 30} / 30`, // Fallback for UI if 0
+          bankDetails: emp.bankDetails || {},
+          email: `${emp.phoneNumber.replace(/\D/g, "")}@taskflow.com`,
+          businessId: emp.businessId.toString(),
         };
       })
     );

@@ -1,15 +1,29 @@
 // app/dashboard/employees/layout.js
 "use client";
 
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 export default function EmployeeLayout({ children }) {
   const pathname = usePathname();
   
-  // In a real database scenario, the employeeId is stored in the authenticated user session.
-  // For the UI demonstration, we will use a fallback mock employee ID "employee1".
-  const employeeId = "employee1";
+  const [user, setUser] = useState({ name: "Employee", employeeId: "employee1" });
+  const [business, setBusiness] = useState({ name: "TaskFlow Company" });
+
+  useEffect(() => {
+    fetch("/api/v1/auth/me")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success) {
+          if (data.user) setUser(data.user);
+          if (data.business) setBusiness(data.business);
+        }
+      })
+      .catch((err) => console.error("Failed to load employee profile:", err));
+  }, []);
+
+  const employeeId = user.employeeId || "employee1";
 
   const navItems = [
     {
@@ -57,11 +71,11 @@ export default function EmployeeLayout({ children }) {
       <header className="sticky top-0 z-10 flex h-16 w-full items-center justify-between border-b border-zinc-200 bg-white px-4 shadow-sm">
         <div className="flex flex-col">
           <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Employee Portal</span>
-          <span className="text-md font-bold text-zinc-900">Rasoi Royale <span className="text-zinc-500 font-normal">| Hajipur</span></span>
+          <span className="text-md font-bold text-zinc-900">{business.name}</span>
         </div>
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-zinc-100 font-semibold text-zinc-800 border border-zinc-200 text-sm">
-            AK
+          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-zinc-100 font-semibold text-zinc-800 border border-zinc-200 text-sm uppercase">
+            {user.name ? user.name.substring(0, 2) : "EM"}
           </div>
         </div>
       </header>

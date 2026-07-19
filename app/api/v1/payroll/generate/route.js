@@ -371,7 +371,7 @@ export async function POST(request) {
         month,
         year,
         payrollOutputs
-      }, { removeOnComplete: true });
+      }, { removeOnComplete: { count: 100, age: 3600 } });
 
       return NextResponse.json({ 
         success: true, 
@@ -390,5 +390,68 @@ export async function POST(request) {
   } catch (error) {
     console.error("[POST Generate Payroll] Error:", error);
     return NextResponse.json({ error: error.message || "Failed to generate payroll." }, { status: 500 });
+  }
+}
+
+export async function GET(request) {
+  try {
+    const token = request.cookies.get("token")?.value;
+    if (!token) {
+      return NextResponse.json({ error: "Session missing." }, { status: 401 });
+    }
+
+    const session = await verifyJWT(token);
+    if (!session || session.role !== "Admin" || !session.businessId) {
+      return NextResponse.json({ error: "Unauthorized access." }, { status: 403 });
+    }
+
+    const { searchParams } = new URL(request.url);
+    const businessId = searchParams.get("businessId");
+    const month = parseInt(searchParams.get("month"));
+    const year = parseInt(searchParams.get("year"));
+
+    if (!businessId || !month || !year) {
+      return NextResponse.json({ error: "businessId, month, and year are required." }, { status: 400 });
+    }
+
+    if (businessId !== session.businessId) {
+      return NextResponse.json({ error: "Unauthorized for this business." }, { status: 403 });
+    }
+
+    await dbConnect();
+
+    const records = await PayrollRecord.find({
+      businessId,
+      "payPeriod.month": month,
+      "payPeriod.year": year
+    }).lean();
+
+    if (records.length === 0) {
+      return NextResponse.json({ success: true, status: "DRAFT", payroll: [] });
+    }
+
+    const employeeIds = records.map(r => r.employeeId);
+    const employees = await Employee.find({ _id: { $in: employeeIds } }).lean();
+    const employeeMap = {};
+    employees.forEach(emp => {
+      employeeMap[emp._id.toString()] = emp.name;
+    });
+
+    const formattedPayroll = records.map(rec => ({
+      employeeId: rec.employeeId.toString(),
+      name: employeeMap[rec.employeeId.toString()] || "Employee",
+      payPeriod: rec.payPeriod,
+      netPayable: rec.netPay,
+      status: rec.status
+    }));
+
+    return NextResponse.json({
+      success: true,
+      status: "LOCKED",
+      payroll: formattedPayroll
+    });
+  } catch (error) {
+    console.error("[GET Finalized Payroll] Error:", error);
+    return NextResponse.json({ error: "Failed to retrieve status." }, { status: 500 });
   }
 }

@@ -19,12 +19,15 @@ export async function proxy(request) {
   const token = request.cookies.get("token")?.value;
   const session = token ? await verifyJWT(token) : null;
 
-  // 2. Auth Page Guards
-  if (AUTH_PAGES.some((route) => pathname.startsWith(route))) {
+  // 2. Auth Page and Root Guards
+  if (AUTH_PAGES.some((route) => pathname.startsWith(route)) || pathname === "/") {
     if (session) {
       const dashboardUrl =
         session.role === "Admin" ? "/dashboard/admin" : "/dashboard/employees";
       return NextResponse.redirect(new URL(dashboardUrl, request.url));
+    }
+    if (pathname === "/") {
+      return NextResponse.redirect(new URL("/login", request.url));
     }
     return NextResponse.next();
   }

@@ -581,14 +581,14 @@ export default function AdminDashboardPage() {
                   <div className="bg-white p-2.5 rounded-xl border border-zinc-200">
                     <span className="text-[10px] font-bold text-zinc-400 block">SICK</span>
                     <span className="text-base font-black text-emerald-600 mt-0.5 block">
-                      {selectedLeave.leaveBalances?.sick ?? 5} / 5
+                      {selectedLeave.leaveBalances?.sick ?? 5} / {selectedLeave.leaveBalances?.maxSick ?? 5}
                     </span>
                     <span className="text-[9px] text-zinc-400 mt-0.5 block">Available</span>
                   </div>
                   <div className="bg-white p-2.5 rounded-xl border border-zinc-200">
                     <span className="text-[10px] font-bold text-zinc-400 block">CASUAL</span>
                     <span className="text-base font-black text-sky-600 mt-0.5 block">
-                      {selectedLeave.leaveBalances?.casual ?? 6} / 6
+                      {selectedLeave.leaveBalances?.casual ?? 6} / {selectedLeave.leaveBalances?.maxCasual ?? 6}
                     </span>
                     <span className="text-[9px] text-zinc-400 mt-0.5 block">Available</span>
                   </div>

@@ -30,6 +30,8 @@ export default function OnboardingWizard() {
     otEnabled: false,
     otType: "Standard Hourly",
     components: [],
+    sickLeaves: 5,
+    casualLeaves: 6,
     // Step 3: Payouts & Banking
     paymentMethod: "Bank Transfer",
     accountHolder: "",

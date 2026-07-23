@@ -84,12 +84,33 @@ export async function GET(request) {
         };
       });
 
+      // Calculate sick and casual leaves taken or pending (already deducted from available balances)
+      const sickTakenOrPending = leaves
+        .filter((l) => (l.type === "Sick" || l.type === "Sick Leave") && (l.status === "Approved" || l.status === "Pending"))
+        .reduce((sum, l) => {
+          const start = new Date(l.startDate);
+          const end = new Date(l.endDate);
+          const diffDays = Math.ceil(Math.abs(end - start) / (1000 * 60 * 60 * 24)) + 1;
+          return sum + diffDays;
+        }, 0);
+
+      const casualTakenOrPending = leaves
+        .filter((l) => (l.type === "Casual" || l.type === "Casual Leave") && (l.status === "Approved" || l.status === "Pending"))
+        .reduce((sum, l) => {
+          const start = new Date(l.startDate);
+          const end = new Date(l.endDate);
+          const diffDays = Math.ceil(Math.abs(end - start) / (1000 * 60 * 60 * 24)) + 1;
+          return sum + diffDays;
+        }, 0);
+
       return NextResponse.json(
         {
           success: true,
           balances: {
             sick: employee.leaveBalances.sick,
+            maxSick: employee.leaveBalances.sick + sickTakenOrPending,
             casual: employee.leaveBalances.casual,
+            maxCasual: employee.leaveBalances.casual + casualTakenOrPending,
             unpaid: unpaidTaken,
           },
           leaves: formattedLeaves,
@@ -111,6 +132,40 @@ export async function GET(request) {
           const start = new Date(l.startDate);
           const end = new Date(l.endDate);
           const diffDays = Math.ceil(Math.abs(end - start) / (1000 * 60 * 60 * 24)) + 1;
+
+          let maxSick = 5;
+          let maxCasual = 6;
+          let currentSick = 5;
+          let currentCasual = 6;
+
+          if (emp) {
+            currentSick = emp.leaveBalances?.sick ?? 5;
+            currentCasual = emp.leaveBalances?.casual ?? 6;
+
+            // Fetch all leaves for this employee to count their taken/pending sick & casual leaves
+            const empLeaves = await Leave.find({ employeeId: emp._id }).lean();
+            const sTaken = empLeaves
+              .filter((el) => (el.type === "Sick" || el.type === "Sick Leave") && (el.status === "Approved" || el.status === "Pending"))
+              .reduce((sum, el) => {
+                const s = new Date(el.startDate);
+                const e = new Date(el.endDate);
+                const d = Math.ceil(Math.abs(e - s) / (1000 * 60 * 60 * 24)) + 1;
+                return sum + d;
+              }, 0);
+
+            const cTaken = empLeaves
+              .filter((el) => (el.type === "Casual" || el.type === "Casual Leave") && (el.status === "Approved" || el.status === "Pending"))
+              .reduce((sum, el) => {
+                const s = new Date(el.startDate);
+                const e = new Date(el.endDate);
+                const d = Math.ceil(Math.abs(e - s) / (1000 * 60 * 60 * 24)) + 1;
+                return sum + d;
+              }, 0);
+
+            maxSick = currentSick + sTaken;
+            maxCasual = currentCasual + cTaken;
+          }
+
           return {
             id: l._id.toString(),
             employeeId: l.employeeId.toString(),
@@ -124,7 +179,12 @@ export async function GET(request) {
             status: l.status,
             isPaid: l.isPaid,
             reason: l.reason || "",
-            leaveBalances: emp ? (emp.leaveBalances || { sick: 5, casual: 6 }) : { sick: 5, casual: 6 }
+            leaveBalances: {
+              sick: currentSick,
+              maxSick: maxSick,
+              casual: currentCasual,
+              maxCasual: maxCasual,
+            },
           };
         })
       );

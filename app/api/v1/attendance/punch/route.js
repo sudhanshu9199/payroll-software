@@ -73,7 +73,15 @@ export async function POST(request) {
 
     // 3. Connect to Database & fetch Employee profile
     await dbConnect();
-    const employee = await Employee.findById(session.employeeId).lean();
+    let employeeId = session.employeeId;
+    if (!employeeId) {
+      const empDoc = await Employee.findOne({ userId: session.userId }).lean();
+      if (empDoc) {
+        employeeId = empDoc._id.toString();
+      }
+    }
+
+    const employee = await Employee.findById(employeeId).lean();
     if (!employee) {
       return NextResponse.json(
         { error: "Employee profile not found." },

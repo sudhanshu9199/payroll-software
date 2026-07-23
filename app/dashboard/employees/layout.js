@@ -16,12 +16,36 @@ export default function EmployeeLayout({ children }) {
       .then((res) => res.json())
       .then((data) => {
         if (data.success) {
-          if (data.user) setUser(data.user);
+          if (data.user) {
+            setUser(data.user);
+            const realId = data.user.employeeId;
+            if (realId && data.user.role === "Employee") {
+              const segments = window.location.pathname.split("/");
+              if (segments[2] === "employees" && segments[3] && segments[3] !== realId && segments[3] !== "attendance") {
+                segments[3] = realId;
+                const newPath = segments.join("/");
+                window.location.href = newPath;
+              }
+            }
+          }
           if (data.business) setBusiness(data.business);
         }
       })
       .catch((err) => console.error("Failed to load employee profile:", err));
   }, []);
+
+  const handleLogout = async () => {
+    try {
+      const res = await fetch("/api/v1/auth/logout", { method: "POST" });
+      if (res.ok) {
+        window.location.href = "/";
+      } else {
+        console.error("Logout failed");
+      }
+    } catch (err) {
+      console.error("Error logging out:", err);
+    }
+  };
 
   const employeeId = user.employeeId || "employee1";
 
@@ -77,6 +101,15 @@ export default function EmployeeLayout({ children }) {
           <div className="flex h-9 w-9 items-center justify-center rounded-full bg-zinc-100 font-semibold text-zinc-800 border border-zinc-200 text-sm uppercase">
             {user.name ? user.name.substring(0, 2) : "EM"}
           </div>
+          <button
+            onClick={handleLogout}
+            title="Logout"
+            className="flex h-9 w-9 items-center justify-center rounded-lg text-zinc-500 hover:text-red-600 hover:bg-zinc-50 transition-colors border border-zinc-200"
+          >
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+            </svg>
+          </button>
         </div>
       </header>
 

@@ -69,6 +69,8 @@ export async function GET(request) {
           advances: totalAdvances,
           attendance: `${attendanceCount || 30} / 30`, // Fallback for UI if 0
           bankDetails: emp.bankDetails || {},
+          aadhaar: emp.aadhaar || "",
+          pan: emp.pan || "",
           email: `${emp.phoneNumber.replace(/\D/g, "")}@taskflow.com`,
           businessId: emp.businessId.toString(),
         };
@@ -119,6 +121,8 @@ export async function POST(request) {
       shiftName,
       locationName,
       radiusMeters,
+      sickLeaves,
+      casualLeaves,
     } = payload;
 
     // 1. Validation
@@ -194,6 +198,8 @@ export async function POST(request) {
         phoneNumber: phone,
         role: designation || "Staff",
         status: "Active",
+        aadhaar: aadhaar || "",
+        pan: pan || "",
         dates: {
           joiningDate: new Date(joiningDate),
         },
@@ -211,6 +217,10 @@ export async function POST(request) {
           latitude,
           longitude,
           radiusMeters: radiusMeters || 50,
+        },
+        leaveBalances: {
+          sick: sickLeaves !== undefined ? Number(sickLeaves) : 5,
+          casual: casualLeaves !== undefined ? Number(casualLeaves) : 6,
         },
       });
       await employee.save({ session: dbSession });

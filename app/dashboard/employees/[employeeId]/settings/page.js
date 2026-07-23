@@ -1,27 +1,65 @@
 // app/dashboard/employees/[employeeId]/settings/page.js
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useParams } from "next/navigation";
 
-export default function EmployeeSettingsPage({ params }) {
+export default function EmployeeSettingsPage() {
+  const params = useParams();
+  const employeeId = params?.employeeId;
+
   const [passwords, setPasswords] = useState({ oldPassword: "", newPassword: "", confirmPassword: "" });
   const [loading, setLoading] = useState(false);
+  const [profileLoading, setProfileLoading] = useState(true);
+  const [profileError, setProfileError] = useState(null);
   const [message, setMessage] = useState(null);
 
-  // Mock employee profile data (synced with onboarding fields)
-  const profile = {
-    name: "Amit Kumar",
-    phone: "+91 98765 43210",
-    designation: "Head Cook",
-    aadhaar: "XXXX-XXXX-8943",
-    pan: "ABCDEXXXXF",
-    shift: "Day Shift (9:00 AM - 6:00 PM)",
-    overtime: "Eligible (Standard hourly rate)",
-    payoutRoute: "Bank Transfer (SBI)",
-    bankAccount: "•••• •••• ••23",
-  };
+  const [profile, setProfile] = useState({
+    name: "",
+    phone: "",
+    designation: "",
+    aadhaar: "",
+    pan: "",
+    shift: "",
+    payoutRoute: "",
+    bankAccount: "",
+  });
 
-  const handlePasswordChange = (e) => {
+  useEffect(() => {
+    async function loadProfile() {
+      try {
+        const url = employeeId
+          ? `/api/v1/employees/profile?employeeId=${employeeId}`
+          : "/api/v1/employees/profile";
+        const res = await fetch(url);
+        if (!res.ok) throw new Error("Failed to load profile details.");
+        const data = await res.json();
+        if (data.success && data.profile) {
+          const p = data.profile;
+          setProfile({
+            name: p.name || "N/A",
+            phone: p.phone || "N/A",
+            designation: p.designation || "N/A",
+            aadhaar: p.maskedAadhaar || "Not Provided",
+            pan: p.maskedPan || "Not Provided",
+            shift: p.shift || "N/A",
+            payoutRoute: p.bankDetails?.upiId && p.bankDetails.upiId !== "Not Provided" ? `UPI Transfer (${p.bankDetails.upiId})` : `Bank Transfer (${p.bankDetails?.bankName || "Active"})`,
+            bankAccount: p.bankDetails?.maskedAccountNumber || "Not Provided",
+          });
+        } else {
+          throw new Error(data.error || "Failed to parse profile details.");
+        }
+      } catch (err) {
+        setProfileError(err.message);
+      } finally {
+        setProfileLoading(false);
+      }
+    }
+
+    loadProfile();
+  }, [employeeId]);
+
+  const handlePasswordChange = async (e) => {
     e.preventDefault();
     setLoading(true);
     setMessage(null);
@@ -32,12 +70,48 @@ export default function EmployeeSettingsPage({ params }) {
       return;
     }
 
-    setTimeout(() => {
-      setMessage({ type: "success", text: "Password updated successfully." });
+    try {
+      const res = await fetch("/api/v1/employees/profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          oldPassword: passwords.oldPassword,
+          newPassword: passwords.newPassword,
+          confirmPassword: passwords.confirmPassword,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to update password.");
+      }
+
+      setMessage({ type: "success", text: data.message || "Password updated successfully." });
       setPasswords({ oldPassword: "", newPassword: "", confirmPassword: "" });
+    } catch (err) {
+      setMessage({ type: "error", text: err.message });
+    } finally {
       setLoading(false);
-    }, 1200);
+    }
   };
+
+  if (profileLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 space-y-4">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-zinc-200 border-t-zinc-900" />
+        <p className="text-sm text-zinc-500 font-medium">Fetching profile details...</p>
+      </div>
+    );
+  }
+
+  if (profileError) {
+    return (
+      <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 text-center">
+        <p className="text-sm text-rose-800 font-bold">Error loading profile</p>
+        <p className="text-xs text-rose-600 mt-1">{profileError}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -83,14 +157,14 @@ export default function EmployeeSettingsPage({ params }) {
         <div className="flex items-center justify-between text-sm">
           <div className="flex flex-col">
             <span className="font-bold text-zinc-900">{profile.payoutRoute}</span>
-            <span className="text-xs text-zinc-400">Account: {profile.bankAccount}</span>
+            <span className="text-xs text-zinc-400">Account / Identifier: {profile.bankAccount}</span>
           </div>
           <span className="text-[10px] uppercase font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-100">
             Active
           </span>
         </div>
         <p className="text-[10px] text-zinc-400 leading-normal">
-          *Bank details can only be edited by the Business Admin. To update your bank account, please request corrections from Xavier.
+          *Payment details can only be edited by the Business Admin. To update your payout route, please request corrections from the Administrator.
         </p>
       </div>
 

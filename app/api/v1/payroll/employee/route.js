@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import mongoose from "mongoose";
 import dbConnect from "@/lib/db";
 import { PayrollRecord, Employee } from "@/lib/models";
 import { verifyJWT } from "@/lib/auth";
@@ -21,12 +22,18 @@ export async function GET(request) {
 
     if (session.role === "Employee") {
       employeeIdToQuery = session.employeeId;
+      if (!employeeIdToQuery || !mongoose.Types.ObjectId.isValid(employeeIdToQuery)) {
+        const empDoc = await Employee.findOne({ userId: session.userId }).lean();
+        if (empDoc) {
+          employeeIdToQuery = empDoc._id.toString();
+        }
+      }
     } else if (session.role === "Admin") {
       const { searchParams } = new URL(request.url);
       employeeIdToQuery = searchParams.get("employeeId");
-      if (!employeeIdToQuery) {
+      if (!employeeIdToQuery || !mongoose.Types.ObjectId.isValid(employeeIdToQuery)) {
         return NextResponse.json(
-          { error: "employeeId query parameter is required for Admin view." },
+          { error: "Valid employeeId query parameter is required for Admin view." },
           { status: 400 }
         );
       }

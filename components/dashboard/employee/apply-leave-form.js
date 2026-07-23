@@ -77,12 +77,12 @@ export default function ApplyLeaveForm() {
       <div className="grid grid-cols-3 gap-2">
         <div className="bg-white rounded-xl p-3 border border-zinc-200 shadow-sm text-center">
           <span className="text-[10px] uppercase font-bold text-zinc-400">Sick</span>
-          <p className="text-lg font-black text-emerald-600 mt-1">{balances.sick} / 5</p>
+          <p className="text-lg font-black text-emerald-600 mt-1">{balances.sick} / {balances.maxSick ?? 5}</p>
           <span className="text-[9px] text-zinc-400">Available</span>
         </div>
         <div className="bg-white rounded-xl p-3 border border-zinc-200 shadow-sm text-center">
           <span className="text-[10px] uppercase font-bold text-zinc-400">Casual</span>
-          <p className="text-lg font-black text-sky-600 mt-1">{balances.casual} / 6</p>
+          <p className="text-lg font-black text-sky-600 mt-1">{balances.casual} / {balances.maxCasual ?? 6}</p>
           <span className="text-[9px] text-zinc-400">Available</span>
         </div>
         <div className="bg-white rounded-xl p-3 border border-zinc-200 shadow-sm text-center">

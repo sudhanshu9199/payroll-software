@@ -26,6 +26,16 @@ export async function GET(request) {
       );
     }
 
+    let employeeId = session.employeeId;
+    if (!employeeId) {
+      const { Employee } = await import("@/lib/models");
+      const empDoc = await Employee.findOne({ userId: session.userId }).lean();
+      if (!empDoc) {
+        return NextResponse.json({ error: "Employee profile not found." }, { status: 404 });
+      }
+      employeeId = empDoc._id.toString();
+    }
+
     // 2. Connect to Database
     await dbConnect();
 
@@ -35,7 +45,7 @@ export async function GET(request) {
     const endOfDay = dayjs().tz(TIMEZONE).endOf("day").toDate();
 
     const attendance = await Attendance.findOne({
-      employeeId: session.employeeId,
+      employeeId,
       date: { $gte: startOfDay, $lte: endOfDay },
     }).lean();
 

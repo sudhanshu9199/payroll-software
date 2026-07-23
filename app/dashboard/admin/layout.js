@@ -35,6 +35,19 @@ export default function AdminLayout({ children }) {
     setCurrentDate(formatted);
   }, []);
 
+  const handleLogout = async () => {
+    try {
+      const res = await fetch("/api/v1/auth/logout", { method: "POST" });
+      if (res.ok) {
+        window.location.href = "/";
+      } else {
+        console.error("Logout failed");
+      }
+    } catch (err) {
+      console.error("Error logging out:", err);
+    }
+  };
+
   const navigation = [
     {
       name: "Dashboard",
@@ -74,7 +87,7 @@ export default function AdminLayout({ children }) {
             TaskFlow<span className="text-emerald-600 font-bold">.</span>
           </span>
         </div>
-        <div className="flex flex-col flex-1 gap-y-7 px-4 py-6 overflow-y-auto">
+        <div className="flex flex-col flex-1 gap-y-7 px-4 py-6 overflow-y-auto justify-between">
           <nav className="flex flex-col gap-y-1">
             {navigation.map((item) => {
               const isActive = pathname === item.href;
@@ -94,6 +107,16 @@ export default function AdminLayout({ children }) {
               );
             })}
           </nav>
+
+          <button
+            onClick={handleLogout}
+            className="group flex items-center gap-x-3 rounded-lg px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 transition-all w-full mt-auto"
+          >
+            <svg className="h-5 w-5 text-red-600 group-hover:text-red-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+            </svg>
+            Logout
+          </button>
         </div>
       </aside>
 
@@ -134,28 +157,45 @@ export default function AdminLayout({ children }) {
         {mobileMenuOpen && (
           <div className="fixed inset-0 z-40 md:hidden flex">
             <div className="fixed inset-0 bg-black/30" onClick={() => setMobileMenuOpen(false)} />
-            <div className="relative flex flex-col w-64 bg-white border-r">
-              <div className="flex h-16 items-center px-6 border-b">
-                <span className="text-lg font-black text-zinc-950">TaskFlow.</span>
+            <div className="relative flex flex-col w-64 bg-white border-r h-full justify-between pb-4">
+              <div>
+                <div className="flex h-16 items-center px-6 border-b">
+                  <span className="text-lg font-black text-zinc-950">TaskFlow.</span>
+                </div>
+                <nav className="flex flex-col gap-y-1 p-4">
+                  {navigation.map((item) => {
+                    const isActive = pathname === item.href;
+                    return (
+                      <Link
+                        key={item.name}
+                        href={item.href}
+                        onClick={() => setMobileMenuOpen(false)}
+                        className={`group flex items-center gap-x-3 rounded-lg px-3 py-2 text-sm font-semibold ${
+                          isActive ? "bg-zinc-900 text-white" : "text-zinc-600 hover:bg-zinc-50"
+                        }`}
+                      >
+                        {item.icon}
+                        {item.name}
+                      </Link>
+                    );
+                  })}
+                </nav>
               </div>
-              <nav className="flex flex-col gap-y-1 p-4">
-                {navigation.map((item) => {
-                  const isActive = pathname === item.href;
-                  return (
-                    <Link
-                      key={item.name}
-                      href={item.href}
-                      onClick={() => setMobileMenuOpen(false)}
-                      className={`group flex items-center gap-x-3 rounded-lg px-3 py-2 text-sm font-semibold ${
-                        isActive ? "bg-zinc-900 text-white" : "text-zinc-600 hover:bg-zinc-50"
-                      }`}
-                    >
-                      {item.icon}
-                      {item.name}
-                    </Link>
-                  );
-                })}
-              </nav>
+
+              <div className="px-4">
+                <button
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    handleLogout();
+                  }}
+                  className="group flex items-center gap-x-3 rounded-lg px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 transition-all w-full"
+                >
+                  <svg className="h-5 w-5 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                  </svg>
+                  Logout
+                </button>
+              </div>
             </div>
           </div>
         )}

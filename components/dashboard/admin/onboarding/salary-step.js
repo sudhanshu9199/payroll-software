@@ -220,6 +220,35 @@ export default function SalaryStep({ data, update }) {
           )}
         </div>
       </div>
+
+      {/* Leave Quota Allocation */}
+      <div className="space-y-3">
+        <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider block">Leave Quota Allocation (Annual)</span>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-semibold text-zinc-500 uppercase">Sick Leaves</label>
+            <input
+              type="number"
+              required
+              min="0"
+              className="mt-1 block w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-900 focus:border-zinc-950 focus:outline-none text-sm"
+              value={data.sickLeaves !== undefined ? data.sickLeaves : 5}
+              onChange={(e) => update({ sickLeaves: parseInt(e.target.value) || 0 })}
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-zinc-500 uppercase">Casual Leaves</label>
+            <input
+              type="number"
+              required
+              min="0"
+              className="mt-1 block w-full rounded-md border border-zinc-300 px-3 py-2 text-zinc-900 focus:border-zinc-950 focus:outline-none text-sm"
+              value={data.casualLeaves !== undefined ? data.casualLeaves : 6}
+              onChange={(e) => update({ casualLeaves: parseInt(e.target.value) || 0 })}
+            />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

@@ -1,12 +1,14 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import EmployeeExitModal from "./EmployeeExitModal";
 
 export default function EmployeeProfileModal({ employeeId, onClose, onRefresh }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState("attendance"); // 'attendance' | 'documents' | 'compensation' | 'personal'
+  const [exitModalOpen, setExitModalOpen] = useState(false);
   
   // Edit mode state
   const [isEditingDocs, setIsEditingDocs] = useState(false);
@@ -81,6 +83,26 @@ export default function EmployeeProfileModal({ employeeId, onClose, onRefresh })
       fetchProfile();
     }
   }, [employeeId]);
+
+  const handleReinstate = async () => {
+    if (!confirm("Are you sure you want to re-instate this employee back to Active roster?")) return;
+    try {
+      setSaving(true);
+      const res = await fetch(`/api/v1/employees/${employeeId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "reinstate" }),
+      });
+      const resData = await res.json();
+      if (!res.ok) throw new Error(resData.error || "Failed to reinstate employee.");
+      await fetchProfile();
+      if (onRefresh) onRefresh();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const handleSaveDocs = async (e) => {
     e.preventDefault();
@@ -258,6 +280,24 @@ export default function EmployeeProfileModal({ employeeId, onClose, onRefresh })
                         />
                       </svg>
                       No Resume Attached (Add)
+                    </button>
+                  )}
+
+                  {/* OFFBOARD / REINSTATE ACTION BUTTON */}
+                  {emp.status === "Active" ? (
+                    <button
+                      onClick={() => setExitModalOpen(true)}
+                      className="px-3 py-2 bg-rose-500/10 border border-rose-500/20 hover:bg-rose-500/20 text-rose-300 font-semibold text-xs sm:text-sm rounded-xl transition-all flex items-center space-x-1.5"
+                    >
+                      <span>🚪 Offboard Staff</span>
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleReinstate}
+                      disabled={saving}
+                      className="px-3 py-2 bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500/20 text-emerald-300 font-semibold text-xs sm:text-sm rounded-xl transition-all flex items-center space-x-1.5"
+                    >
+                      <span>🔄 Re-instate Staff</span>
                     </button>
                   )}
 
@@ -1084,6 +1124,18 @@ export default function EmployeeProfileModal({ employeeId, onClose, onRefresh })
           </>
         )}
       </div>
+
+      {/* Employee Exit & FnF Audit Modal */}
+      {exitModalOpen && (
+        <EmployeeExitModal
+          employeeId={employeeId}
+          onClose={() => setExitModalOpen(false)}
+          onSuccess={() => {
+            fetchProfile();
+            if (onRefresh) onRefresh();
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -90,6 +90,32 @@ export async function GET(request, { params }) {
       linkedUser = await User.findById(employee.userId).select("email role createdAt").lean();
     }
 
+    // 7. Calculate FnF Audit Metrics (Prorated payout based on worked days)
+    const baseMonthlyPay = currentSalary ? currentSalary.baseAmount : 0;
+    const totalDaysInMonth = endOfMonth.getDate();
+    const dailyRate = totalDaysInMonth > 0 ? baseMonthlyPay / totalDaysInMonth : 0;
+
+    let fnfCutoffDate = endOfMonth;
+    if (employee.status === "Exited" && employee.dates?.exitDate) {
+      fnfCutoffDate = new Date(employee.dates.exitDate);
+    }
+
+    const workedDaysInExitPeriod = attendanceRecords.filter(
+      (a) => a.punches && a.punches.length > 0 && new Date(a.date) <= fnfCutoffDate
+    ).length;
+
+    const proratedGrossPay = Math.round(dailyRate * workedDaysInExitPeriod);
+    const estimatedNetFnF = Math.max(0, proratedGrossPay - activeAdvanceTotal);
+
+    const fnfAudit = {
+      workedDaysInPeriod: workedDaysInExitPeriod,
+      baseMonthlyPay,
+      dailyRate: Math.round(dailyRate),
+      proratedGrossPay,
+      outstandingAdvances: activeAdvanceTotal,
+      estimatedNetFnF,
+    };
+
     return NextResponse.json({
       success: true,
       employee: {
@@ -103,6 +129,7 @@ export async function GET(request, { params }) {
         workingDaysInMonth: endOfMonth.getDate(),
         attendancePercentage: Math.round((presentDays / (now.getDate() || 1)) * 100),
       },
+      fnfAudit,
       attendanceLogs: attendanceRecords,
       leaves,
       currentSalary,
@@ -119,7 +146,7 @@ export async function GET(request, { params }) {
   }
 }
 
-// PATCH: Update employee personal, bank, documents, or shift details
+// PATCH: Update employee profile, bank details, or process offboarding/reinstatement
 export async function PATCH(request, { params }) {
   try {
     const token = request.cookies.get("token")?.value;
@@ -143,13 +170,27 @@ export async function PATCH(request, { params }) {
 
     // Prepare update object safely
     const updateData = {};
+
+    // Dedicated Offboarding / Reinstating Action logic
+    if (body.action === "offboard") {
+      updateData.status = "Exited";
+      updateData["dates.exitDate"] = body.exitDate ? new Date(body.exitDate) : new Date();
+      updateData["dates.exitReason"] = body.exitReason || "Resignation";
+      updateData["dates.exitNotes"] = body.exitNotes || "";
+    } else if (body.action === "reinstate") {
+      updateData.status = "Active";
+      updateData["dates.exitDate"] = null;
+      updateData["dates.exitReason"] = "";
+      updateData["dates.exitNotes"] = "";
+    }
+
     if (body.name !== undefined) updateData.name = body.name.trim();
     if (body.phoneNumber !== undefined) updateData.phoneNumber = body.phoneNumber.trim();
     if (body.role !== undefined) updateData.role = body.role.trim();
     if (body.department !== undefined) updateData.department = body.department.trim();
     if (body.email !== undefined) updateData.email = body.email.trim();
 
-    if (body.status !== undefined && ["Active", "Exited"].includes(body.status)) {
+    if (body.status !== undefined && ["Active", "Exited"].includes(body.status) && !body.action) {
       updateData.status = body.status;
       if (body.status === "Exited" && !body.exitDate) {
         updateData["dates.exitDate"] = new Date();
@@ -207,7 +248,12 @@ export async function PATCH(request, { params }) {
 
     return NextResponse.json({
       success: true,
-      message: "Employee profile updated successfully.",
+      message:
+        body.action === "offboard"
+          ? "Employee offboarded successfully. Records preserved for FnF."
+          : body.action === "reinstate"
+          ? "Employee reinstated to Active roster."
+          : "Employee profile updated successfully.",
       employee: updatedEmployee,
     });
   } catch (error) {

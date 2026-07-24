@@ -24,60 +24,49 @@ export default function AdminDashboardPage() {
   // Derived pending leaves
   const pendingLeaves = leaves.filter((leave) => leave.status === "Pending");
 
-  // Fetch leaves from database
-  const fetchLeaves = async () => {
+  // Parallelized Data Fetcher
+  const loadDashboardData = async () => {
     try {
-      const res = await fetch("/api/v1/leaves");
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          setLeaves(data.leaves || []);
+      setLoading(true);
+      const [empRes, leaveRes] = await Promise.all([
+        fetch("/api/v1/employees"),
+        fetch("/api/v1/leaves"),
+      ]);
+
+      let empData = [];
+      if (empRes.ok) {
+        const json = await empRes.json();
+        empData = json.employees || [];
+        setEmployees(empData);
+      }
+
+      if (leaveRes.ok) {
+        const json = await leaveRes.json();
+        setLeaves(json.leaves || []);
+      }
+
+      // Pre-check payroll status immediately if employees exist
+      if (empData.length > 0 && empData[0]?.businessId) {
+        const bId = empData[0].businessId;
+        const payrollRes = await fetch(`/api/v1/payroll/generate?businessId=${bId}&month=6&year=2026`);
+        if (payrollRes.ok) {
+          const pJson = await payrollRes.json();
+          if (pJson.success && pJson.status === "LOCKED") {
+            setPayrollStatus("LOCKED");
+            setDryRunData(pJson.payroll);
+          }
         }
       }
     } catch (err) {
-      console.error("Failed to load leaves:", err);
+      console.error("Dashboard initial load error:", err);
+    } finally {
+      setLoading(false);
     }
   };
 
   useEffect(() => {
-    async function fetchEmployees() {
-      try {
-        const res = await fetch("/api/v1/employees");
-        if (res.ok) {
-          const data = await res.json();
-          setEmployees(data.employees || []);
-        }
-      } catch (err) {
-        console.error("Failed to load employees:", err);
-      } finally {
-        setLoading(false);
-      }
-    }
-    fetchEmployees();
-    fetchLeaves();
+    loadDashboardData();
   }, []);
-
-  useEffect(() => {
-    if (!employees || employees.length === 0) return;
-    const businessId = employees[0]?.businessId;
-    if (!businessId) return;
-
-    async function checkPayrollStatus() {
-      try {
-        const res = await fetch(`/api/v1/payroll/generate?businessId=${businessId}&month=6&year=2026`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.success && data.status === "LOCKED") {
-            setPayrollStatus("LOCKED");
-            setDryRunData(data.payroll);
-          }
-        }
-      } catch (err) {
-        console.error("Failed to check payroll status:", err);
-      }
-    }
-    checkPayrollStatus();
-  }, [employees]);
 
   const totalEstimatedPayroll = employees.reduce((sum, emp) => sum + (emp.basePay || 0), 0);
   const totalAdvances = employees.reduce((sum, emp) => sum + (emp.advances || 0), 0);

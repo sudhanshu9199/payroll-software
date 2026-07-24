@@ -23,59 +23,70 @@ export async function GET(request) {
 
     // Fetch all employees for this business
     const employees = await Employee.find({ businessId: session.businessId }).lean();
+    if (!employees || employees.length === 0) {
+      return NextResponse.json({ success: true, employees: [] }, { status: 200 });
+    }
 
-    // Populate additional details (salary, active advances, mock attendance)
-    const populated = await Promise.all(
-      employees.map(async (emp) => {
-        // Active salary structure (effectiveTo: null)
-        const salary = await SalaryHistory.findOne({
-          employeeId: emp._id,
-          effectiveTo: null,
-        }).lean();
+    const empIds = employees.map((e) => e._id);
+    const startOfMonth = new Date();
+    startOfMonth.setDate(1);
+    startOfMonth.setHours(0, 0, 0, 0);
 
-        // Active advances balance
-        const activeAdvances = await Advance.find({
-          employeeId: emp._id,
-          status: "Active",
-        }).lean();
-        const totalAdvances = activeAdvances.reduce((sum, adv) => sum + adv.balanceRemaining, 0);
+    // BATCH QUERIES: Reduce N*3 database queries to 3 total queries
+    const [salaries, advances, attendanceAgg] = await Promise.all([
+      SalaryHistory.find({ employeeId: { $in: empIds }, effectiveTo: null }).lean(),
+      Advance.find({ employeeId: { $in: empIds }, status: "Active" }).lean(),
+      Attendance.aggregate([
+        { $match: { employeeId: { $in: empIds }, date: { $gte: startOfMonth } } },
+        { $group: { _id: "$employeeId", count: { $sum: 1 } } },
+      ]),
+    ]);
 
-        // Fetch attendance punches for current month
-        const startOfMonth = new Date();
-        startOfMonth.setDate(1);
-        startOfMonth.setHours(0, 0, 0, 0);
-        const attendanceCount = await Attendance.countDocuments({
-          employeeId: emp._id,
-          date: { $gte: startOfMonth },
-        });
+    // Create fast O(1) lookup maps
+    const salaryMap = new Map(salaries.map((s) => [s.employeeId.toString(), s.baseAmount]));
+    const advanceMap = new Map();
+    advances.forEach((adv) => {
+      const key = adv.employeeId.toString();
+      advanceMap.set(key, (advanceMap.get(key) || 0) + adv.balanceRemaining);
+    });
+    const attendanceMap = new Map(attendanceAgg.map((a) => [a._id.toString(), a.count]));
 
-        // Formatted joining date
-        const formattedJoining = emp.dates.joiningDate
-          ? new Date(emp.dates.joiningDate).toLocaleDateString("en-IN", {
-              day: "2-digit",
-              month: "short",
-              year: "numeric",
-            })
-          : "";
+    // Populate employees cleanly in memory
+    const populated = employees.map((emp) => {
+      const empIdStr = emp._id.toString();
+      const basePay = salaryMap.get(empIdStr) || 0;
+      const totalAdvances = advanceMap.get(empIdStr) || 0;
+      const attendanceCount = attendanceMap.get(empIdStr) || 0;
 
-        return {
-          id: emp._id.toString(),
-          name: emp.name,
-          role: emp.role,
-          phone: emp.phoneNumber,
-          joiningDate: formattedJoining,
-          status: emp.status,
-          basePay: salary ? salary.baseAmount : 0,
-          advances: totalAdvances,
-          attendance: `${attendanceCount || 30} / 30`, // Fallback for UI if 0
-          bankDetails: emp.bankDetails || {},
-          aadhaar: emp.aadhaar || "",
-          pan: emp.pan || "",
-          email: `${emp.phoneNumber.replace(/\D/g, "")}@taskflow.com`,
-          businessId: emp.businessId.toString(),
-        };
-      })
-    );
+      const formattedJoining = emp.dates?.joiningDate
+        ? new Date(emp.dates.joiningDate).toLocaleDateString("en-IN", {
+            day: "2-digit",
+            month: "short",
+            year: "numeric",
+          })
+        : "";
+
+      return {
+        _id: empIdStr,
+        id: empIdStr,
+        name: emp.name,
+        role: emp.role,
+        department: emp.department || "General",
+        phone: emp.phoneNumber,
+        phoneNumber: emp.phoneNumber,
+        joiningDate: formattedJoining,
+        status: emp.status,
+        basePay,
+        advances: totalAdvances,
+        attendance: `${attendanceCount} / 30`,
+        bankDetails: emp.bankDetails || {},
+        aadhaar: emp.aadhaar || "",
+        pan: emp.pan || "",
+        email: emp.email || `${emp.phoneNumber.replace(/\D/g, "")}@taskflow.com`,
+        documents: emp.documents || {},
+        businessId: emp.businessId.toString(),
+      };
+    });
 
     return NextResponse.json({ success: true, employees: populated }, { status: 200 });
   } catch (error) {

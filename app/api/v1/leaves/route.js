@@ -124,70 +124,73 @@ export async function GET(request) {
 
       // Fetch leaves for the active business
       const leaves = await Leave.find({ businessId: session.businessId }).sort({ startDate: -1 }).lean();
+      if (!leaves || leaves.length === 0) {
+        return NextResponse.json({ success: true, leaves: [] }, { status: 200 });
+      }
 
-      // Populate employee details
-      const populated = await Promise.all(
-        leaves.map(async (l) => {
-          const emp = await Employee.findById(l.employeeId).lean();
+      // Batch fetch distinct employees in 1 query
+      const uniqueEmpIds = [...new Set(leaves.map((l) => l.employeeId.toString()))];
+      const employees = await Employee.find({ _id: { $in: uniqueEmpIds } })
+        .select("name role phoneNumber leaveBalances")
+        .lean();
+
+      const empMap = new Map(employees.map((e) => [e._id.toString(), e]));
+
+      // Pre-compute sick/casual days taken across all leaves in memory
+      const takenSickMap = new Map();
+      const takenCasualMap = new Map();
+
+      leaves.forEach((l) => {
+        if (l.status === "Approved" || l.status === "Pending") {
+          const empIdStr = l.employeeId.toString();
           const start = new Date(l.startDate);
           const end = new Date(l.endDate);
           const diffDays = Math.ceil(Math.abs(end - start) / (1000 * 60 * 60 * 24)) + 1;
 
-          let maxSick = 5;
-          let maxCasual = 6;
-          let currentSick = 5;
-          let currentCasual = 6;
-
-          if (emp) {
-            currentSick = emp.leaveBalances?.sick ?? 5;
-            currentCasual = emp.leaveBalances?.casual ?? 6;
-
-            // Fetch all leaves for this employee to count their taken/pending sick & casual leaves
-            const empLeaves = await Leave.find({ employeeId: emp._id }).lean();
-            const sTaken = empLeaves
-              .filter((el) => (el.type === "Sick" || el.type === "Sick Leave") && (el.status === "Approved" || el.status === "Pending"))
-              .reduce((sum, el) => {
-                const s = new Date(el.startDate);
-                const e = new Date(el.endDate);
-                const d = Math.ceil(Math.abs(e - s) / (1000 * 60 * 60 * 24)) + 1;
-                return sum + d;
-              }, 0);
-
-            const cTaken = empLeaves
-              .filter((el) => (el.type === "Casual" || el.type === "Casual Leave") && (el.status === "Approved" || el.status === "Pending"))
-              .reduce((sum, el) => {
-                const s = new Date(el.startDate);
-                const e = new Date(el.endDate);
-                const d = Math.ceil(Math.abs(e - s) / (1000 * 60 * 60 * 24)) + 1;
-                return sum + d;
-              }, 0);
-
-            maxSick = currentSick + sTaken;
-            maxCasual = currentCasual + cTaken;
+          if (l.type === "Sick" || l.type === "Sick Leave") {
+            takenSickMap.set(empIdStr, (takenSickMap.get(empIdStr) || 0) + diffDays);
+          } else if (l.type === "Casual" || l.type === "Casual Leave") {
+            takenCasualMap.set(empIdStr, (takenCasualMap.get(empIdStr) || 0) + diffDays);
           }
+        }
+      });
 
-          return {
-            id: l._id.toString(),
-            employeeId: l.employeeId.toString(),
-            name: emp ? emp.name : "Unknown Employee",
-            role: emp ? emp.role : "Staff",
-            type: l.type === "Sick" ? "Sick Leave" : l.type === "Casual" ? "Casual Leave" : "Unpaid Leave",
-            startDate: l.startDate,
-            endDate: l.endDate,
-            dates: `${start.toLocaleDateString("en-IN", { day: "2-digit", month: "short" })} - ${end.toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}`,
-            days: diffDays,
-            status: l.status,
-            isPaid: l.isPaid,
-            reason: l.reason || "",
-            leaveBalances: {
-              sick: currentSick,
-              maxSick: maxSick,
-              casual: currentCasual,
-              maxCasual: maxCasual,
-            },
-          };
-        })
-      );
+      // Populate leave records in memory
+      const populated = leaves.map((l) => {
+        const empIdStr = l.employeeId.toString();
+        const emp = empMap.get(empIdStr);
+        const start = new Date(l.startDate);
+        const end = new Date(l.endDate);
+        const diffDays = Math.ceil(Math.abs(end - start) / (1000 * 60 * 60 * 24)) + 1;
+
+        let currentSick = emp?.leaveBalances?.sick ?? 5;
+        let currentCasual = emp?.leaveBalances?.casual ?? 6;
+        const sTaken = takenSickMap.get(empIdStr) || 0;
+        const cTaken = takenCasualMap.get(empIdStr) || 0;
+        const maxSick = currentSick + sTaken;
+        const maxCasual = currentCasual + cTaken;
+
+        return {
+          id: l._id.toString(),
+          employeeId: empIdStr,
+          name: emp ? emp.name : "Unknown Employee",
+          role: emp ? emp.role : "Staff",
+          type: l.type === "Sick" ? "Sick Leave" : l.type === "Casual" ? "Casual Leave" : "Unpaid Leave",
+          startDate: l.startDate,
+          endDate: l.endDate,
+          dates: `${start.toLocaleDateString("en-IN", { day: "2-digit", month: "short" })} - ${end.toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}`,
+          days: diffDays,
+          status: l.status,
+          isPaid: l.isPaid,
+          reason: l.reason || "",
+          leaveBalances: {
+            sick: currentSick,
+            maxSick: maxSick,
+            casual: currentCasual,
+            maxCasual: maxCasual,
+          },
+        };
+      });
 
       return NextResponse.json({ success: true, leaves: populated }, { status: 200 });
     }
